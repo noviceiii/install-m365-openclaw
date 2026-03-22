@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # =============================================================================
-# OpenClaw M365 Graph Skill - Debugged & Improved Installer (English)
+# OpenClaw M365 Graph Skill - Installer 
 # =============================================================================
-# Changes:
+# Improvements:
 # - Asks for OpenClaw base directory
 # - Asks for M365 user email (guidance only)
-# - Uses editable install + explicit PYTHONPATH
+# - Creates proper package structure: src/m365_openclaw/__init__.py
+# - Installs as editable package with correct setup.py
+# - Verifies package import after installation
 # - PATH added permanently (only once)
-# - Better error handling and diagnostics
+# - Uses venv Python and pip explicitly
 # =============================================================================
 
 set -euo pipefail
@@ -16,7 +18,7 @@ set -euo pipefail
 DEFAULT_OPENCLAW_DIR="${HOME}/.openclaw"
 DEFAULT_M365_USER="cleotine.claw@t9t.ch"
 
-echo "=== OpenClaw M365 Graph Skill Installer - Debugged Version ==="
+echo "=== OpenClaw M365 Graph Skill Installer - Reliable Version ==="
 
 # Ask for OpenClaw base directory
 read -p "OpenClaw base directory [default: ${DEFAULT_OPENCLAW_DIR}]: " OPENCLAW_DIR
@@ -47,7 +49,7 @@ sudo apt update -qq
 sudo apt install -y python3 python3-venv python3-pip curl git
 
 # 2. Create directories
-mkdir -p "${INSTALL_DIR}"/{bin,src}
+mkdir -p "${INSTALL_DIR}"/{bin,src/m365_openclaw}
 mkdir -p "${OPENCLAW_DIR}/credentials"
 mkdir -p "${HOME}/.local/bin"
 
@@ -58,7 +60,9 @@ python3 -m venv "${VENV_DIR}"
     O365 msal msal_extensions python-dotenv \
     python-docx python-pptx openpyxl
 
-# 4. Create setup.py and install as editable package
+# 4. Create proper package structure and setup.py
+touch "${SRC_DIR}/m365_openclaw/__init__.py"
+
 cat > "${INSTALL_DIR}/setup.py" << 'EOF'
 from setuptools import setup, find_packages
 
@@ -70,16 +74,18 @@ setup(
 )
 EOF
 
-# Install editable package (must be in INSTALL_DIR)
+# Install editable package
 cd "${INSTALL_DIR}"
-echo "Installing package in editable mode..."
+echo "Installing m365_openclaw package in editable mode..."
 "${VENV_DIR}/bin/pip" install -e .
 
-# Verify installation
-if "${VENV_DIR}/bin/python" -c "import m365_openclaw" 2>/dev/null; then
-    echo "Package m365_openclaw successfully installed."
+# Verify import works
+echo "Verifying package import..."
+if "${VENV_DIR}/bin/python" -c "import m365_openclaw; print('SUCCESS: m365_openclaw imported')" 2>/dev/null; then
+    echo "Package verification successful."
 else
-    echo "WARNING: Package import failed after install. Check setup.py."
+    echo "ERROR: Package import failed. Check setup.py and src/m365_openclaw/__init__.py"
+    exit 1
 fi
 
 # 5. Create CLI wrapper
@@ -91,7 +97,6 @@ EOF
 
 chmod +x "${INSTALL_DIR}/bin/m365"
 
-# Symlink
 ln -sf "${INSTALL_DIR}/bin/m365" "${HOME}/.local/bin/${CLI_NAME}"
 
 # Add PATH permanently (only once)
@@ -112,14 +117,15 @@ EOF
 # 7. Entra ID instructions
 echo ""
 echo "=== Entra ID App Registration (one-time) ==="
-echo "1. Go to https://entra.microsoft.com → App registrations → New"
+echo "1. Go to https://entra.microsoft.com → App registrations → New registration"
 echo "   Name: OpenClaw-M365-Agent"
-echo "   Single tenant, no redirect URI"
-echo "2. Microsoft Graph permissions:"
+echo "   Supported account types: Accounts in this organizational directory only"
+echo "   Redirect URI: leave blank"
+echo "2. API permissions → Microsoft Graph"
 echo "   Application: Mail.ReadWrite.All, Mail.Send, Calendars.ReadWrite.All, Files.ReadWrite.All"
 echo "   Delegated:   Notes.ReadWrite.All, offline_access"
-echo "   Grant admin consent"
-echo "3. Create client secret → copy Value"
+echo "   → Grant admin consent"
+echo "3. Certificates & secrets → New client secret → copy Value"
 echo ""
 read -p "Press ENTER when you have TENANT_ID, CLIENT_ID, CLIENT_SECRET..."
 
@@ -132,12 +138,8 @@ sed -i "s|your-tenant-id-here|${TENANT_ID}|" "${CONFIG_FILE}"
 sed -i "s|your-app-client-id-here|${CLIENT_ID}|" "${CONFIG_FILE}"
 sed -i "s|your-app-client-secret-here|${CLIENT_SECRET}|" "${CONFIG_FILE}"
 
-# 8. Create modules
-cat > "${SRC_DIR}/__init__.py" << 'EOF'
-# Package initializer
-EOF
-
-cat > "${SRC_DIR}/core.py" << 'EOF'
+# 8. Create modules inside package
+cat > "${SRC_DIR}/m365_openclaw/core.py" << 'EOF'
 # core.py - Microsoft 365 Client
 import os
 from pathlib import Path
@@ -160,7 +162,7 @@ class M365Client:
         )
         
         self.account = Account(
-            self.credentials,
+            credentials=self.credentials,
             auth_flow_type='credentials',
             tenant_id=self.tenant_id,
             token_backend=self.token_backend
@@ -197,10 +199,10 @@ class M365Client:
             return f"Error: {str(e)}"
 EOF
 
-cat > "${SRC_DIR}/__main__.py" << 'EOF'
+cat > "${SRC_DIR}/m365_openclaw/__main__.py" << 'EOF'
 # __main__.py - CLI entry point
 import sys
-from core import M365Client
+from m365_openclaw.core import M365Client
 
 client = M365Client()
 
@@ -225,24 +227,24 @@ else:
     print(f"Unknown command: {cmd}")
 EOF
 
-# 9. Start authentication
+# 9. Start initial authentication
 echo ""
 echo "[9/10] Starting initial authentication..."
 echo "Please sign in with: ${M365_USER}"
-echo "If browser does not open, copy the URL from the terminal."
+echo "If browser does not open (headless system), copy the URL from terminal."
 echo ""
 
-# Explicit PYTHONPATH for safety
 export PYTHONPATH="${SRC_DIR}:${PYTHONPATH}"
 "${VENV_DIR}/bin/python" -m m365_openclaw calendar-list
 
 echo ""
-echo "=== Installation finished! ==="
+echo "=== Installation complete! ==="
 echo "Test with:"
 echo "  m365 calendar-list"
 echo ""
-echo "If module error persists:"
-echo "  cd ${INSTALL_DIR}"
-echo "  ${VENV_DIR}/bin/pip install -e ."
+echo "If authentication fails or no calendar appears:"
 echo "  rm -rf ${OPENCLAW_DIR}/credentials/m365_token_cache.bin"
+echo "  cd ${INSTALL_DIR}"
 echo "  ${VENV_DIR}/bin/python -m m365_openclaw calendar-list"
+echo ""
+echo "Done!"

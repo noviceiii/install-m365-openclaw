@@ -105,22 +105,44 @@ m365
 → Consent (only once)
 → Token is saved and will auto-refresh forever
 
-## CLI Examples
+### CLI Examples
+
+After installation and successful authentication, your OpenClaw agents (or you manually) can use the `m365` command like this:
+
 ```bash
-# Send email to external address
-m365 send-mail colleague@external.com "Urgent" "Please review the attached report."
+# Send an email (works to external recipients too)
+m365 send-mail colleague@external-company.com "Project Update" "Please find the attached Q3 report. Deadline is Friday."
 
-# Update Excel cell
-m365 excel-update "Reports/Q1-sales.xlsx" Sheet1 A1:B2 "Q1 Total" "45000"
+# List upcoming calendar events (next 7 days by default)
+m365 calendar-list
 
-# Replace text in Word document
-m365 word-update "Proposals/offer.docx" "{{ClientName}}=ACME Corp" "{{Price}}=€ 12,500"
+# Create a simple OneNote page
+m365 onenote-create "Meeting 2026-04" "<h1>Team Sync April</h1><p>Agenda: Budget review, new hires</p>"
 
-# Update slide title in PowerPoint
-m365 ppt-update "Presentations/2026-plan.pptx" 0 title="2026 Business Plan – Final"
+# List files in OneDrive root or a folder
+m365 onedrive-list "/"
+m365 onedrive-list "/Documents/Reports"
 
-# Upload file to OneDrive
-m365 upload ./budget.pdf /Documents/Finance/budget-2026.pdf
+# Upload a local file to OneDrive
+m365 upload ./budget-2026.xlsx "/Finance/Annual/Budget 2026.xlsx"
+
+# Download a file from OneDrive
+m365 download "/Finance/Annual/Budget 2026.xlsx" ./local-budget.xlsx
+
+# Update cells in an Excel file (direct Graph API – no download needed)
+# Format: m365 excel-update <path> <sheet> <range> <value1> <value2> ...
+m365 excel-update "Reports/Q1-sales.xlsx" Sheet1 A1:B2 "Product" "Revenue" "Total" "124500"
+
+# Replace text placeholders in a Word document
+# Format: m365 word-update <path> key1=value1 key2=value2 ...
+m365 word-update "Proposals/Offer-2026.docx" "{{Client}}=ACME Corp" "{{Price}}=€ 24,900" "{{Date}}=April 15, 2026"
+
+# Update text in a PowerPoint slide
+# Format: m365 ppt-update <path> <slide-number> key1=value1 ...
+m365 ppt-update "Presentations/Strategy-2026.pptx" 0 "{{Title}}=2026 Growth Strategy" "{{Subtitle}}=Q2–Q4 Outlook"
+
+# More advanced / custom usage (for agents or scripts)
+m365 upload ./invoice.pdf "/Invoices/2026/Q2/invoice-045.pdf"
 ```
 
 ## Troubleshooting

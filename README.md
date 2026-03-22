@@ -143,6 +143,21 @@ m365 ppt-update "Presentations/Strategy-2026.pptx" 0 "{{Title}}=2026 Growth Stra
 
 # More advanced / custom usage (for agents or scripts)
 m365 upload ./invoice.pdf "/Invoices/2026/Q2/invoice-045.pdf"
+
+# Email
+m365 send-mail user@external.com "Hello" "Test message from OpenClaw"
+
+# Excel cell update
+m365 excel-update report.xlsx Sheet1 A1 "New Value"
+
+# Word text replace
+m365 word-update proposal.docx "{{Name}}=Olinieur" "{{Company}}=xAI"
+
+# PowerPoint slide title
+m365 ppt-update plan.pptx 0 title="2026 Roadmap"
+
+# OneDrive upload
+m365 upload ./data.csv /Documents/data-2026.csv
 ```
 
 ## Troubleshooting

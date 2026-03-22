@@ -1,2 +1,136 @@
-# install-m365-openclaw.sh
-This skill provides a production-ready, fully unattended (daemon-style) Microsoft 365 connector tailored for **OpenClaw** personal AI agents. It uses the battle-tested **python-o365** library + MSAL for automatic token refresh, supporting both app-only (Mail/Calendar/Files) and delegated (OneNote) authentication flows.
+# OpenClaw M365 Graph Skill
+
+🦞 **Headless Microsoft 365 integration for OpenClaw agents**  
+Control Mail, Calendar, OneNote, OneDrive, Word, Excel and PowerPoint via Microsoft Graph API – fully unattended, daemon-style, Linux-friendly.
+
+This skill gives OpenClaw agents production-ready access to Microsoft 365 services using the **python-o365** library + MSAL with automatic token refresh.  
+It supports both **application permissions** (for Mail, Calendar, Files) and **delegated flow** (required for OneNote since early 2025).
+
+### Features
+- Send & receive emails (including to external recipients)
+- Create, read, update and delete calendar events
+- Create and edit OneNote notebooks, sections and pages (HTML content)
+- Full OneDrive file operations (list, upload, download, share)
+- **Excel** – direct cell/range/table editing via Graph API
+- **Word** – download → edit with `python-docx` → re-upload
+- **PowerPoint** – download → edit with `python-pptx` → re-upload
+- Automatic silent token refresh (persists across reboots / cron jobs)
+- Simple CLI: `m365 send-mail ...`, `m365 excel-update ...`, etc.
+- OpenClaw-native: installs under `~/.openclaw/skills/m365-graph` with `SKILL.md` discovery
+- Secure: no hardcoded secrets, encrypted MSAL token cache, `.env` file
+
+### Requirements
+- **Microsoft 365 license**  
+  Minimum: **Microsoft 365 Business Basic** (or Business Standard / E3 / E5)  
+  → Personal / Family plans **do NOT** support application permissions / daemon apps
+
+- Ubuntu 24.04 LTS (or newer) – headless server recommended
+
+- Python 3.10+ (installed automatically)
+
+### Installation (one command)
+
+```bash
+curl -sSL https://raw.githubusercontent.com/YOURUSERNAME/openclaw-m365-graph-skill/main/install-m365-openclaw.sh | bash
+```
+Or clone the repo and run the installer manually:
+```bash
+Bashgit clone https://github.com/YOURUSERNAME/openclaw-m365-graph-skill.git
+cd openclaw-m365-graph-skill
+chmod +x install-m365-openclaw.sh
+./install-m365-openclaw.sh
+```
+The installer will:
+
+- Create isolated virtual environment
+- Install all dependencies (`O365`, `msal`, `python-docx`, `python-pptx`, `openpyxl`, …)
+- Create CLI command `m365`
+- Set up directory structure under `~/.openclaw/skills/m365-graph`
+- Generate `SKILL.md` for automatic OpenClaw agent discovery
+
+### Microsoft Configuration (Entra ID / Azure AD App Registration) – One-time setup
+
+1. Go to: https://entra.microsoft.com → **App registrations** → **New registration**
+
+   - **Name:** `OpenClaw-M365-Agent` (or similar)  
+   - **Supported account types:** Accounts in this organizational directory only (single tenant)  
+   - **Redirect URI:** leave blank (daemon / public client)
+
+2. **API permissions** → **Add a permission** → **Microsoft Graph**
+
+   **Application permissions** (for unattended / daemon use):  
+   - `Mail.ReadWrite.All`  
+   - `Mail.Send`  
+   - `Calendars.ReadWrite.All`  
+   - `Files.ReadWrite.All`
+
+   **Delegated permissions** (required for OneNote):  
+   - `Notes.ReadWrite.All`  
+   - `offline_access`
+
+   → **Grant admin consent for [your organization]**
+
+3. **Certificates & secrets** → **New client secret**
+
+   - **Description:** OpenClaw daemon secret  
+   - **Expires:** 24 months (recommended)  
+   - **Copy the Value** immediately (you won’t see it again)
+
+4. Copy these three values:
+
+   - **Application (client) ID** → `CLIENT_ID`  
+   - **Directory (tenant) ID** → `TENANT_ID`  
+   - **Client Secret Value** → `CLIENT_SECRET`
+
+### After Installation – Enter Credentials
+The installer will prompt you to enter:
+```text
+TENANT_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+CLIENT_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+CLIENT_SECRET=~abcdefghijklmnopqrstuvwxyz1234567890abcdef
+```
+
+Alternatively edit the file manually:
+```bash
+nano ~/.openclaw/skills/m365-graph/.env
+```
+
+### First Run & Token Authentication
+Run once to authenticate (only needed the very first time):
+```bash
+m365
+```
+→ Browser window opens (or copy-paste URL if headless)
+→ Sign in with an admin / licensed user account
+→ Consent (only once)
+→ Token is saved and will auto-refresh forever
+
+## CLI Examples
+```bash
+# Send email to external address
+m365 send-mail colleague@external.com "Urgent" "Please review the attached report."
+
+# Update Excel cell
+m365 excel-update "Reports/Q1-sales.xlsx" Sheet1 A1:B2 "Q1 Total" "45000"
+
+# Replace text in Word document
+m365 word-update "Proposals/offer.docx" "{{ClientName}}=ACME Corp" "{{Price}}=€ 12,500"
+
+# Update slide title in PowerPoint
+m365 ppt-update "Presentations/2026-plan.pptx" 0 title="2026 Business Plan – Final"
+
+# Upload file to OneDrive
+m365 upload ./budget.pdf /Documents/Finance/budget-2026.pdf
+```
+
+## Troubleshooting
+- Token expired / authentication fails → delete ~/.openclaw/credentials/m365_token_cache.bin and run m365 again
+- Permission denied → check admin consent was granted
+- Email not arriving externally → configure SPF/DKIM/DMARC in your Microsoft 365 tenant
+- Excel/PowerPoint editing fails → make sure file is not open in desktop Office app
+
+## Security Notes
+- Never commit .env or the token cache to git
+- Use a dedicated service account with minimal licenses
+- Rotate client secret every 12–24 months
+- Restrict app permissions via Application Access Policy if possible

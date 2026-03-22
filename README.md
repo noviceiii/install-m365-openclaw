@@ -31,11 +31,11 @@ It supports both **application permissions** (for Mail, Calendar, Files) and **d
 ### Installation (one command)
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/YOURUSERNAME/openclaw-m365-graph-skill/main/install-m365-openclaw.sh | bash
+curl -sSL https://raw.githubusercontent.com/noviceiii/install-m365-openclaw/main/install-m365-openclaw.sh | bash
 ```
 Or clone the repo and run the installer manually:
 ```bash
-Bashgit clone https://github.com/YOURUSERNAME/openclaw-m365-graph-skill.git
+Bashgit clone https://github.com/noviceiii/openclaw-m365-graph-skill.git
 cd openclaw-m365-graph-skill
 chmod +x install-m365-openclaw.sh
 ./install-m365-openclaw.sh

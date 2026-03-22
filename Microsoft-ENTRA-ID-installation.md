@@ -39,6 +39,7 @@ This guide explains how to register a daemon application in Microsoft Entra ID (
    - `Mail.Send`  
    - `Calendars.ReadWrite.All`  
    - `Files.ReadWrite.All`
+   - `Contacts.ReadWrite`
 
    **Delegated permissions** (needed for OneNote):
    - `Notes.ReadWrite.All`  
@@ -87,7 +88,11 @@ Paste these three values into the .env file created by the installer:
 ```bash
 ~/.openclaw/skills/m365-graph/.env
 ```
-Run the CLI once to perform initial authentication:Bashm365→ The script will guide you through the first login/consent (may open a browser or show a URL to copy-paste if running headless).
+Run the CLI once to perform initial authentication:
+```bash
+m365
+```
+→ The script will guide you through the first login/consent (may open a browser or show a URL to copy-paste if running headless).
 → After this step, the token is cached and auto-refreshes silently forever.
 
 ### Common issues & fixes

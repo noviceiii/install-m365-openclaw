@@ -35,7 +35,7 @@ curl -sSL https://raw.githubusercontent.com/noviceiii/install-m365-openclaw/main
 ```
 Or clone the repo and run the installer manually:
 ```bash
-Bashgit clone https://github.com/noviceiii/openclaw-m365-graph-skill.git
+git clone https://github.com/noviceiii/openclaw-m365-graph-skill.git
 cd openclaw-m365-graph-skill
 chmod +x install-m365-openclaw.sh
 ./install-m365-openclaw.sh
@@ -63,6 +63,7 @@ The installer will:
    - `Mail.Send`  
    - `Calendars.ReadWrite.All`  
    - `Files.ReadWrite.All`
+   - `Contacts.ReadWrite`
 
    **Delegated permissions** (required for OneNote):  
    - `Notes.ReadWrite.All`  
@@ -113,11 +114,24 @@ After installation and successful authentication, your OpenClaw agents (or you m
 # Send an email (works to external recipients too)
 m365 send-mail colleague@external-company.com "Project Update" "Please find the attached Q3 report. Deadline is Friday."
 
+# List recent inbox messages
+m365 mail-list
+m365 mail-list 50
+
 # List upcoming calendar events (next 7 days by default)
 m365 calendar-list
 
-# Create a simple OneNote page
-m365 onenote-create "Meeting 2026-04" "<h1>Team Sync April</h1><p>Agenda: Budget review, new hires</p>"
+# Create a calendar event (ISO 8601 dates)
+m365 calendar-create "Team Sync" "2026-04-15T10:00:00" "2026-04-15T11:00:00" "Monthly sync"
+
+# List contacts
+m365 contacts-list
+
+# Add a contact
+m365 contacts-create "Jane" "Doe" "jane.doe@example.com" "+1-555-0100"
+
+# Create a OneNote page (notebook, section, title, html)
+m365 onenote-create "WorkNotes" "April 2026" "Team Sync" "<h1>Team Sync April</h1><p>Agenda: Budget review, new hires</p>"
 
 # List files in OneDrive root or a folder
 m365 onedrive-list "/"
@@ -140,24 +154,6 @@ m365 word-update "Proposals/Offer-2026.docx" "{{Client}}=ACME Corp" "{{Price}}=â
 # Update text in a PowerPoint slide
 # Format: m365 ppt-update <path> <slide-number> key1=value1 ...
 m365 ppt-update "Presentations/Strategy-2026.pptx" 0 "{{Title}}=2026 Growth Strategy" "{{Subtitle}}=Q2â€“Q4 Outlook"
-
-# More advanced / custom usage (for agents or scripts)
-m365 upload ./invoice.pdf "/Invoices/2026/Q2/invoice-045.pdf"
-
-# Email
-m365 send-mail user@external.com "Hello" "Test message from OpenClaw"
-
-# Excel cell update
-m365 excel-update report.xlsx Sheet1 A1 "New Value"
-
-# Word text replace
-m365 word-update proposal.docx "{{Name}}=Olinieur" "{{Company}}=xAI"
-
-# PowerPoint slide title
-m365 ppt-update plan.pptx 0 title="2026 Roadmap"
-
-# OneDrive upload
-m365 upload ./data.csv /Documents/data-2026.csv
 ```
 
 ## Troubleshooting

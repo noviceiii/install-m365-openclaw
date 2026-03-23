@@ -131,7 +131,7 @@ New-ManagementScope `
 New-ManagementRoleAssignment `
   -Name "OpenClaw-MailRole" `
   -App "<YOUR_CLIENT_ID>" `
-  -Role "Application Mail.Read" `
+  -Role "Application Mail.ReadWrite" `
   -CustomResourceScope "OpenClaw-MailScope"
 ```
 

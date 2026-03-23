@@ -213,30 +213,56 @@ if ($PolicyMode -eq "RBAC") {
         Write-Host "  Service principal already exists: $($sp.DisplayName)" -ForegroundColor Green
     }
 
-    # 4b. Create a management scope limited to the group members
+    # 4b. Ensure organization customization is enabled (required for management scopes/assignments)
+    Write-Host "  Ensuring organization customization is enabled..." -ForegroundColor Gray
+    try {
+        Enable-OrganizationCustomization -ErrorAction Stop
+        Write-Host "  Organization customization enabled. Waiting 30 s for propagation..." -ForegroundColor Green
+        Start-Sleep -Seconds 30
+    } catch {
+        if ($_.Exception.Message -match "already" -or $_.Exception.Message -match "bereits") {
+            Write-Host "  Organization customization already enabled." -ForegroundColor Green
+        } else {
+            Write-Warning "  Could not enable organization customization: $($_.Exception.Message)"
+        }
+    }
+
+    # 4c. Create a management scope limited to the group members
     $scopeName = "OpenClaw-Scope-" + (($GroupEmailAddress -split "@")[0] -replace "[^a-zA-Z0-9-]", "-")
     Write-Host "  Creating management scope '$scopeName'..." -ForegroundColor Gray
     $existingScope = Get-ManagementScope -Identity $scopeName -ErrorAction SilentlyContinue
     if (-not $existingScope) {
-        New-ManagementScope `
-            -Name $scopeName `
-            -RecipientRestrictionFilter "MemberOfGroup -eq '$GroupEmailAddress'"
-        Write-Host "  Management scope created." -ForegroundColor Green
+        try {
+            New-ManagementScope `
+                -Name $scopeName `
+                -RecipientRestrictionFilter "MemberOfGroup -eq '$GroupEmailAddress'" `
+                -ErrorAction Stop
+            Write-Host "  Management scope created." -ForegroundColor Green
+        } catch {
+            Write-Error "  Failed to create management scope '$scopeName': $($_.Exception.Message)"
+            exit 1
+        }
     } else {
         Write-Host "  Management scope already exists – reusing." -ForegroundColor Green
     }
 
-    # 4c. Assign the Application Mail.Read role within the scope
+    # 4d. Assign the Application Mail.Read role within the scope
     $assignmentName = "OpenClaw-MailRead-" + $AppId.Substring(0, [Math]::Min(8, $AppId.Length))
     Write-Host "  Creating role assignment '$assignmentName'..." -ForegroundColor Gray
     $existingAssignment = Get-ManagementRoleAssignment -Identity $assignmentName -ErrorAction SilentlyContinue
     if (-not $existingAssignment) {
-        New-ManagementRoleAssignment `
-            -Name $assignmentName `
-            -App  $AppId `
-            -Role "Application Mail.Read" `
-            -CustomResourceScope $scopeName
-        Write-Host "  Role assignment created." -ForegroundColor Green
+        try {
+            New-ManagementRoleAssignment `
+                -Name $assignmentName `
+                -App  $AppId `
+                -Role "Application Mail.Read" `
+                -CustomResourceScope $scopeName `
+                -ErrorAction Stop
+            Write-Host "  Role assignment created." -ForegroundColor Green
+        } catch {
+            Write-Error "  Failed to create role assignment '$assignmentName': $($_.Exception.Message)"
+            exit 1
+        }
     } else {
         Write-Host "  Role assignment already exists – skipping." -ForegroundColor Green
     }
@@ -265,7 +291,13 @@ if ($PolicyMode -eq "RBAC") {
 
     Write-Host ""
     Write-Host "  Current management role assignments for the app:" -ForegroundColor Gray
-    Get-ManagementRoleAssignment -App $AppId | Format-Table Name, Role, CustomResourceScope -AutoSize
+    $spForVerify = Get-ServicePrincipal -Identity $AppId -ErrorAction SilentlyContinue
+    if ($spForVerify) {
+        Get-ManagementRoleAssignment -RoleAssignee $spForVerify.Identity -ErrorAction SilentlyContinue |
+            Format-Table Name, Role, CustomResourceScope -AutoSize
+    } else {
+        Write-Host "  Warning: Could not find service principal for AppId '$AppId'." -ForegroundColor Yellow
+    }
 
 } else {
 

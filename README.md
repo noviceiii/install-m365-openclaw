@@ -48,7 +48,13 @@ The installer will:
 - Set up directory structure under `~/.openclaw/skills/m365-graph`
 - Generate `SKILL.md` for automatic OpenClaw agent discovery
 
-### Microsoft Configuration (Entra ID / Azure AD App Registration) – One-time setup
+### Microsoft Configuration – One-time setup
+
+> For a detailed, step-by-step walkthrough see:
+> - [Microsoft-ENTRA-ID-installation.md](Microsoft-ENTRA-ID-installation.md) – App registration & permissions
+> - [Microsoft-Exchange-Policy-installation.md](Microsoft-Exchange-Policy-installation.md) – Restrict mailbox access via Exchange Online Application Access Policy (or modern RBAC for Applications)
+
+### Entra ID / Azure AD App Registration
 
 1. Go to: https://entra.microsoft.com → **App registrations** → **New registration**
 
@@ -166,4 +172,4 @@ m365 ppt-update "Presentations/Strategy-2026.pptx" 0 "{{Title}}=2026 Growth Stra
 - Never commit .env or the token cache to git
 - Use a dedicated service account with minimal licenses
 - Rotate client secret every 12–24 months
-- Restrict app permissions via Application Access Policy if possible
+- Restrict app permissions via Application Access Policy (or modern RBAC for Applications) – see [Microsoft-Exchange-Policy-installation.md](Microsoft-Exchange-Policy-installation.md)

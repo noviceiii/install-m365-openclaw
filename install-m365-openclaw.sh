@@ -134,6 +134,20 @@ echo "   Delegated:   Notes.ReadWrite.All, offline_access"
 echo "   → Grant admin consent"
 echo "3. Certificates & secrets → New client secret → copy Value"
 echo ""
+echo "IMPORTANT – Mail access (Exchange Online Application Access Policy):"
+echo "   Mail.ReadWrite.All alone may not be sufficient for daemon/app-only access."
+echo "   An Exchange admin must run this in Exchange Online PowerShell to permit"
+echo "   the app to access the target mailbox:"
+echo ""
+echo "     New-ApplicationAccessPolicy \\"
+echo "       -AppId <CLIENT_ID> \\"
+echo "       -PolicyScopeGroupId <M365_USER_EMAIL> \\"
+echo "       -AccessRight RestrictAccess \\"
+echo "       -Description 'OpenClaw M365 mail access'"
+echo ""
+echo "   Reference: https://aka.ms/graph-app-access-policy"
+echo "   (Calendar and Contacts do not require this extra policy.)"
+echo ""
 read -p "Press ENTER when you have TENANT_ID, CLIENT_ID, CLIENT_SECRET..."
 
 read -p "TENANT_ID: " TENANT_ID
@@ -251,18 +265,60 @@ class M365Client:
 
     # ── Mail ──────────────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _raise_if_mail_403(exc):
+        """Re-raise with actionable guidance when a 403 occurs on a mail endpoint."""
+        try:
+            import requests
+            if isinstance(exc, requests.exceptions.HTTPError):
+                resp = getattr(exc, 'response', None)
+                if resp is not None and resp.status_code == 403:
+                    url = getattr(resp, 'url', '') or ''
+                    if 'mailFolders' in url or '/messages' in url:
+                        raise PermissionError(
+                            "Mail access denied (HTTP 403 Forbidden).\n"
+                            "\n"
+                            "Common causes and fixes:\n"
+                            "  1. The 'Mail.ReadWrite.All' application permission is not\n"
+                            "     admin-consented in your Azure App Registration.\n"
+                            "     Go to: Entra ID → App registrations → <your app>\n"
+                            "             → API permissions → Grant admin consent\n"
+                            "\n"
+                            "  2. Exchange Online requires an Application Access Policy for\n"
+                            "     mail access via application credentials (daemon/app flow).\n"
+                            "     Ask your Exchange admin to run this in Exchange Online PowerShell:\n"
+                            "\n"
+                            "       New-ApplicationAccessPolicy \\\n"
+                            "         -AppId <CLIENT_ID> \\\n"
+                            "         -PolicyScopeGroupId <M365_USER_EMAIL> \\\n"
+                            "         -AccessRight RestrictAccess \\\n"
+                            "         -Description 'OpenClaw M365 mail access'\n"
+                            "\n"
+                            "     Reference: https://aka.ms/graph-app-access-policy"
+                        ) from exc
+        except ImportError:
+            pass
+
     def send_mail(self, to_address, subject, body):
         """Send an email to any recipient."""
-        m = self.account.mailbox().new_message()
-        m.to.add(to_address)
-        m.subject = subject
-        m.body = body
-        m.send()
+        try:
+            m = self.account.mailbox().new_message()
+            m.to.add(to_address)
+            m.subject = subject
+            m.body = body
+            m.send()
+        except Exception as exc:
+            self._raise_if_mail_403(exc)
+            raise
         return f"Email sent to {to_address}"
 
     def list_mail(self, limit=20):
         """Return recent messages from the inbox."""
-        messages = self.account.mailbox().inbox_folder().get_messages(limit=limit)
+        try:
+            messages = self.account.mailbox().inbox_folder().get_messages(limit=limit)
+        except Exception as exc:
+            self._raise_if_mail_403(exc)
+            raise
         result = []
         for msg in messages:
             result.append({
@@ -680,6 +736,9 @@ def main():
             print(USAGE)
             sys.exit(1)
 
+    except PermissionError as exc:
+        print(f"Permission Error: {exc}", file=sys.stderr)
+        sys.exit(1)
     except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
@@ -725,6 +784,9 @@ Credentials stored in: ${CONFIG_FILE}
 | ppt-update <path> <slide> key=val ... | Replace text in a PowerPoint slide |
 
 ## Notes
+- Mail access requires the Exchange Online Application Access Policy in addition to
+  the Mail.ReadWrite.All application permission. Ask your Exchange admin to run
+  New-ApplicationAccessPolicy (see https://aka.ms/graph-app-access-policy).
 - OneNote requires the delegated permission Notes.ReadWrite.All
 - Excel update uses the Graph API directly; the workbook must not be open in Office
 - Word and PowerPoint use a download → edit locally → re-upload workflow
@@ -739,6 +801,31 @@ echo ""
 
 export PYTHONPATH="${SRC_DIR}:${PYTHONPATH:-}"
 "${VENV_DIR}/bin/python" -m m365_openclaw calendar-list
+
+echo ""
+echo "--- Verifying mail access (requires Mail.ReadWrite.All + Exchange Online policy) ---"
+mail_output=$("${VENV_DIR}/bin/python" -m m365_openclaw mail-list 2>&1)
+mail_exit=$?
+if [ "${mail_exit}" -eq 0 ]; then
+    echo "${mail_output}"
+    echo "Mail access: OK"
+else
+    echo "${mail_output}" >&2
+    echo ""
+    echo "WARNING: Mail access failed (see error above)."
+    echo "  This is usually caused by one of:"
+    echo "    1. 'Mail.ReadWrite.All' application permission not admin-consented."
+    echo "       Go to: Entra ID → App registrations → <your app> → API permissions"
+    echo "    2. Exchange Online Application Access Policy not configured."
+    echo "       Ask your Exchange admin to run in Exchange Online PowerShell:"
+    echo "         New-ApplicationAccessPolicy \\"
+    echo "           -AppId ${CLIENT_ID} \\"
+    echo "           -PolicyScopeGroupId ${M365_USER} \\"
+    echo "           -AccessRight RestrictAccess \\"
+    echo "           -Description 'OpenClaw M365 mail access'"
+    echo "       Reference: https://aka.ms/graph-app-access-policy"
+    echo "  Calendar and contacts are unaffected and will continue to work."
+fi
 
 echo ""
 echo "=== Installation complete! ==="

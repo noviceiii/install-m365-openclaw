@@ -247,8 +247,21 @@ if ($PolicyMode -eq "RBAC") {
         Write-Host "  Management scope already exists – reusing." -ForegroundColor Green
     }
 
-    # 4d. Assign the Application Mail.Read role within the scope
-    $assignmentName = "OpenClaw-MailRead-" + $AppId.Substring(0, [Math]::Min(8, $AppId.Length))
+    # 4d. Clean up legacy Mail.Read assignment if it exists (no longer sufficient)
+    $oldAssignmentName = "OpenClaw-MailRead-" + $AppId.Substring(0, [Math]::Min(8, $AppId.Length))
+    $oldAssignment = Get-ManagementRoleAssignment -Identity $oldAssignmentName -ErrorAction SilentlyContinue
+    if ($oldAssignment) {
+        Write-Host "  Removing outdated role assignment '$oldAssignmentName' (Mail.Read -> Mail.ReadWrite upgrade)..." -ForegroundColor Yellow
+        try {
+            Remove-ManagementRoleAssignment -Identity $oldAssignmentName -Confirm:$false -ErrorAction Stop
+            Write-Host "  Old role assignment removed." -ForegroundColor Green
+        } catch {
+            Write-Warning "  Could not remove old role assignment '$oldAssignmentName': $($_.Exception.Message)"
+        }
+    }
+
+    # 4e. Assign the Application Mail.ReadWrite role within the scope
+    $assignmentName = "OpenClaw-MailReadWrite-" + $AppId.Substring(0, [Math]::Min(8, $AppId.Length))
     Write-Host "  Creating role assignment '$assignmentName'..." -ForegroundColor Gray
     $existingAssignment = Get-ManagementRoleAssignment -Identity $assignmentName -ErrorAction SilentlyContinue
     if (-not $existingAssignment) {
@@ -256,7 +269,7 @@ if ($PolicyMode -eq "RBAC") {
             New-ManagementRoleAssignment `
                 -Name $assignmentName `
                 -App  $AppId `
-                -Role "Application Mail.Read" `
+                -Role "Application Mail.ReadWrite" `
                 -CustomResourceScope $scopeName `
                 -ErrorAction Stop
             Write-Host "  Role assignment created." -ForegroundColor Green

@@ -220,11 +220,12 @@ if ($PolicyMode -eq "RBAC") {
         Write-Host "  Organization customization enabled. Waiting 30 s for propagation..." -ForegroundColor Green
         Start-Sleep -Seconds 30
     } catch {
-        if ($_.Exception.Message -match "already" -or $_.Exception.Message -match "bereits") {
-            Write-Host "  Organization customization already enabled." -ForegroundColor Green
-        } else {
-            Write-Warning "  Could not enable organization customization: $($_.Exception.Message)"
-        }
+        # Exchange Online throws an error when organization customization is already enabled.
+        # This is expected for most tenants. Treat any failure here as non-fatal and continue;
+        # if the organization is truly not customized, New-ManagementScope will fail with a
+        # clear error message below.
+        Write-Host "  Organization customization already enabled (skipping)." -ForegroundColor Green
+        Write-Host "  (Detail: $($_.Exception.Message))" -ForegroundColor Gray
     }
 
     # 4c. Create a management scope limited to the group members

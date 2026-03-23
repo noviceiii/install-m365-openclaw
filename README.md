@@ -7,10 +7,13 @@ This skill gives OpenClaw agents production-ready access to Microsoft 365 servic
 It supports both **application permissions** (for Mail, Calendar, Files) and **delegated flow** (required for OneNote since early 2025).
 
 ### Features
-- Send & receive emails (including to external recipients)
+- Send & receive emails (including to external recipients, CC, and with file attachments)
+- Count, mark-as-read, move messages and create mail folders
 - Create, read, update and delete calendar events
+- Count calendar events, list attendees with RSVP status, read shared calendars
 - Create and edit OneNote notebooks, sections and pages (HTML content)
-- Full OneDrive file operations (list, upload, download, share)
+- Full OneDrive file operations (list, count, upload, download, share)
+- **Contacts** – list, count, add, update fields (birthday, home page, addresses, …), list newest
 - **Excel** – direct cell/range/table editing via Graph API
 - **Word** – download → edit with `python-docx` → re-upload
 - **PowerPoint** – download → edit with `python-pptx` → re-upload
@@ -104,23 +107,62 @@ After installation and successful authentication, your OpenClaw agents (or you m
 
 ```bash
 # Send an email (works to external recipients too)
-m365 send-mail colleague@external-company.com "Project Update" "Please find the attached Q3 report. Deadline is Friday."
+m365 send-mail colleague@external-company.com "Project Update" "Please find the attached Q3 report."
 
-# List recent inbox messages
+# Send an email with a CC recipient
+m365 send-mail boss@company.com "Report" "Attached as requested." cc@company.com
+
+# Send an email with a file attachment (leave CC empty to skip it)
+m365 send-mail team@company.com "Budget" "Please review." "" /home/user/budget.xlsx
+
+# List recent inbox messages (output includes message IDs)
 m365 mail-list
 m365 mail-list 50
+
+# Count messages in the inbox
+m365 mail-count
+
+# Mark a message as read (use the ID shown by mail-list)
+m365 mail-mark-read AAMkAGI2...
+
+# Move a message to a folder
+m365 mail-move AAMkAGI2... Archive
+
+# Create a new mail folder
+m365 mail-folder-create Projects
 
 # List upcoming calendar events (next 7 days by default)
 m365 calendar-list
 
+# Count calendar events in the next 30 days
+m365 calendar-count 30
+
 # Create a calendar event (ISO 8601 dates)
 m365 calendar-create "Team Sync" "2026-04-15T10:00:00" "2026-04-15T11:00:00" "Monthly sync"
+
+# List attendees and their RSVP status for a specific event
+m365 calendar-attendees "Q2 Planning"
+
+# Read a colleague's shared calendar (next 14 days)
+m365 calendar-shared manager@company.com 14
 
 # List contacts
 m365 contacts-list
 
+# Count all contacts
+m365 contacts-count
+
+# List the 5 most recently added contacts
+m365 contacts-newest 5
+
 # Add a contact
 m365 contacts-create "Jane" "Doe" "jane.doe@example.com" "+1-555-0100"
+
+# Update an existing contact's home page and birthday
+m365 contacts-update "John Smith" home_page=https://johnsmith.com birthday=1985-03-22
+
+# See all fields that can be updated with contacts-update
+m365 contacts-fields
 
 # Create a OneNote page (notebook, section, title, html)
 m365 onenote-create "WorkNotes" "April 2026" "Team Sync" "<h1>Team Sync April</h1><p>Agenda: Budget review, new hires</p>"
@@ -128,6 +170,9 @@ m365 onenote-create "WorkNotes" "April 2026" "Team Sync" "<h1>Team Sync April</h
 # List files in OneDrive root or a folder
 m365 onedrive-list "/"
 m365 onedrive-list "/Documents/Reports"
+
+# Count files in a OneDrive folder (sub-folders are not counted)
+m365 onedrive-count /Documents
 
 # Upload a local file to OneDrive
 m365 upload ./budget-2026.xlsx "/Finance/Annual/Budget 2026.xlsx"

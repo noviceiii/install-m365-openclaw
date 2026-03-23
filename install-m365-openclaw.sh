@@ -299,13 +299,18 @@ class M365Client:
         except ImportError:
             pass
 
-    def send_mail(self, to_address, subject, body):
-        """Send an email to any recipient."""
+    def send_mail(self, to_address, subject, body, cc_addresses=None, attachment_path=None):
+        """Send an email, optionally with CC recipients and/or a file attachment."""
         try:
             m = self.account.mailbox().new_message()
             m.to.add(to_address)
+            if cc_addresses:
+                for cc in (cc_addresses if isinstance(cc_addresses, list) else [cc_addresses]):
+                    m.cc.add(cc)
             m.subject = subject
             m.body = body
+            if attachment_path:
+                m.attachments.add(attachment_path)
             m.send()
         except Exception as exc:
             self._raise_if_mail_403(exc)
@@ -313,7 +318,7 @@ class M365Client:
         return f"Email sent to {to_address}"
 
     def list_mail(self, limit=20):
-        """Return recent messages from the inbox."""
+        """Return recent messages from the inbox, including message IDs."""
         try:
             messages = self.account.mailbox().inbox_folder().get_messages(limit=limit)
         except Exception as exc:
@@ -322,12 +327,55 @@ class M365Client:
         result = []
         for msg in messages:
             result.append({
+                'id': msg.object_id,
                 'subject': msg.subject or '(no subject)',
                 'from': str(msg.sender),
                 'date': msg.received.isoformat() if msg.received else None,
                 'is_read': msg.is_read,
             })
         return result
+
+    def count_mail(self):
+        """Return the number of messages in the inbox (counts up to 5000 messages)."""
+        try:
+            messages = self.account.mailbox().inbox_folder().get_messages(limit=5000)
+        except Exception as exc:
+            self._raise_if_mail_403(exc)
+            raise
+        return sum(1 for _ in messages)
+
+    def mail_mark_read(self, message_id):
+        """Mark a specific inbox message as read by its message ID."""
+        try:
+            mailbox = self.account.mailbox()
+            msg = mailbox.get_message(object_id=message_id, download_attachments=False)
+            msg.mark_as_read()
+        except Exception as exc:
+            self._raise_if_mail_403(exc)
+            raise
+        return "Message marked as read"
+
+    def mail_move(self, message_id, folder_name):
+        """Move a message to a named mail folder."""
+        try:
+            mailbox = self.account.mailbox()
+            msg = mailbox.get_message(object_id=message_id, download_attachments=False)
+            folder = mailbox.get_folder(folder_name=folder_name)
+            msg.move(folder)
+        except Exception as exc:
+            self._raise_if_mail_403(exc)
+            raise
+        return f"Message moved to '{folder_name}'"
+
+    def mail_folder_create(self, folder_name):
+        """Create a new mail folder in the root of the mailbox."""
+        try:
+            mailbox = self.account.mailbox()
+            mailbox.create_child_folder(folder_name)
+        except Exception as exc:
+            self._raise_if_mail_403(exc)
+            raise
+        return f"Mail folder '{folder_name}' created"
 
     # ── Calendar ──────────────────────────────────────────────────────────────
 
@@ -366,6 +414,48 @@ class M365Client:
         event.save()
         return f"Event '{subject}' created"
 
+    def count_calendar_events(self, days=7):
+        """Return the count of upcoming calendar events within the next *days* days."""
+        return len(self.get_calendar_events(days=days))
+
+    def calendar_event_attendees(self, event_subject):
+        """Return attendees and their acceptance status for the first event matching the subject."""
+        schedule = self.account.schedule()
+        calendar = schedule.get_default_calendar()
+        events = list(calendar.get_events(include_recurring=False, limit=100))
+        matching = [e for e in events if event_subject.lower() in (e.subject or '').lower()]
+        if not matching:
+            return {'error': f"No event found matching '{event_subject}'"}
+        event = matching[0]
+        attendees = []
+        if hasattr(event, 'attendees'):
+            for att in event.attendees:
+                status = str(att.response_status) if hasattr(att, 'response_status') else 'unknown'
+                name = att.name if hasattr(att, 'name') and att.name else str(att.address)
+                attendees.append({'name': name, 'email': str(att.address), 'status': status})
+        return {'subject': event.subject, 'attendees': attendees}
+
+    def calendar_shared(self, other_user_email, days=7):
+        """List upcoming events from a calendar shared by *other_user_email*."""
+        schedule = self.account.schedule(resource=other_user_email)
+        calendar = schedule.get_default_calendar()
+        events = calendar.get_events(include_recurring=False, limit=100)
+        now_utc = datetime.now(timezone.utc)
+        cutoff = now_utc + timedelta(days=days)
+        upcoming = []
+        for event in events:
+            start = event.start
+            if start and start.tzinfo is None:
+                start = start.replace(tzinfo=timezone.utc)
+            if start and now_utc <= start <= cutoff:
+                upcoming.append({
+                    'subject': event.subject or '(no subject)',
+                    'start': start.isoformat(),
+                    'end': event.end.isoformat() if event.end else None,
+                    'location': str(event.location) if event.location else None,
+                })
+        return upcoming
+
     # ── Contacts ──────────────────────────────────────────────────────────────
 
     def list_contacts(self, limit=100):
@@ -399,6 +489,101 @@ class M365Client:
             contact.business_phones.append(phone)
         contact.save()
         return f"Contact '{given_name} {surname}' created"
+
+    def count_contacts(self):
+        """Return the total number of contacts in the personal address book (counts up to 5000)."""
+        address_book = self.account.address_book()
+        return sum(1 for _ in address_book.get_contacts(limit=5000))
+
+    def contacts_newest(self, limit=10):
+        """Return the most recently created contacts, ordered by creation date."""
+        address_book = self.account.address_book()
+        q = address_book.new_query().order_by('createdDateTime', ascending=False)
+        contacts = address_book.get_contacts(query=q, limit=limit)
+        result = []
+        for contact in contacts:
+            emails = []
+            if hasattr(contact, 'emails') and contact.emails:
+                emails = [str(e) for e in contact.emails]
+            result.append({
+                'name': contact.full_name or '(no name)',
+                'emails': emails,
+                'created': contact.created.isoformat() if hasattr(contact, 'created') and contact.created else None,
+            })
+        return result
+
+    def contacts_fields(self):
+        """Return a list of contact fields supported by update_contact()."""
+        return [
+            {'field': 'given_name',       'description': 'First name',                     'example': 'John'},
+            {'field': 'surname',          'description': 'Last name',                      'example': 'Smith'},
+            {'field': 'display_name',     'description': 'Full display name',              'example': 'John Smith'},
+            {'field': 'title',            'description': 'Honorific title',                'example': 'Dr'},
+            {'field': 'job_title',        'description': 'Job title',                      'example': 'Software Engineer'},
+            {'field': 'company_name',     'description': 'Company name',                   'example': 'ACME Corp'},
+            {'field': 'department',       'description': 'Department',                     'example': 'Engineering'},
+            {'field': 'birthday',         'description': 'Birthday (ISO date YYYY-MM-DD)', 'example': '1990-06-15'},
+            {'field': 'home_page',        'description': 'Website / home page URL',        'example': 'https://example.com'},
+            {'field': 'mobile_phone',     'description': 'Mobile phone number',            'example': '+1 555 0100'},
+            {'field': 'personal_email',   'description': 'Personal email address',         'example': 'john@personal.com'},
+            {'field': 'notes',            'description': 'Personal notes / memo',          'example': 'Met at conference 2025'},
+            {'field': 'home_street',      'description': 'Home address – street',          'example': '123 Main St'},
+            {'field': 'home_city',        'description': 'Home address – city',            'example': 'Springfield'},
+            {'field': 'home_state',       'description': 'Home address – state / region',  'example': 'CA'},
+            {'field': 'home_zip',         'description': 'Home address – postal code',     'example': '90210'},
+            {'field': 'home_country',     'description': 'Home address – country',         'example': 'USA'},
+            {'field': 'business_street',  'description': 'Business address – street',      'example': '456 Corp Ave'},
+            {'field': 'business_city',    'description': 'Business address – city',        'example': 'New York'},
+            {'field': 'business_state',   'description': 'Business address – state / region', 'example': 'NY'},
+            {'field': 'business_zip',     'description': 'Business address – postal code', 'example': '10001'},
+            {'field': 'business_country', 'description': 'Business address – country',     'example': 'USA'},
+        ]
+
+    def update_contact(self, contact_name, updates):
+        """
+        Update fields on an existing contact found by display name.
+        updates is a dict of field_name -> value (see contacts_fields() for available fields).
+        """
+        address_book = self.account.address_book()
+        q = address_book.new_query('displayName').contains(contact_name)
+        contacts = list(address_book.get_contacts(query=q, limit=10))
+        if not contacts:
+            all_contacts = list(address_book.get_contacts(limit=500))
+            contacts = [c for c in all_contacts if contact_name.lower() in (c.full_name or '').lower()]
+        if not contacts:
+            return f"Contact '{contact_name}' not found"
+        contact = contacts[0]
+        _address_fields = {
+            'home_street': ('home_address', 'street'),
+            'home_city':   ('home_address', 'city'),
+            'home_state':  ('home_address', 'state'),
+            'home_zip':    ('home_address', 'postalCode'),
+            'home_country':('home_address', 'countryOrRegion'),
+            'business_street': ('business_address', 'street'),
+            'business_city':   ('business_address', 'city'),
+            'business_state':  ('business_address', 'state'),
+            'business_zip':    ('business_address', 'postalCode'),
+            'business_country':('business_address', 'countryOrRegion'),
+        }
+        applied = []
+        for field, value in updates.items():
+            if field == 'birthday':
+                from datetime import date as _date
+                contact.birthday = _date.fromisoformat(value)
+            elif field == 'mobile_phone':
+                contact.mobile_phone = value
+            elif field == 'personal_email':
+                contact.emails.add(value)
+            elif field in _address_fields:
+                addr_attr, key = _address_fields[field]
+                addr = getattr(contact, addr_attr, {}) or {}
+                addr[key] = value
+                setattr(contact, addr_attr, addr)
+            else:
+                setattr(contact, field, value)
+            applied.append(field)
+        contact.save()
+        return f"Contact '{contact.full_name}' updated: {', '.join(applied)}"
 
     # ── OneDrive ─────────────────────────────────────────────────────────────
 
@@ -438,6 +623,11 @@ class M365Client:
         local = Path(local_path)
         item.download(to_path=str(local.parent), name=local.name)
         return f"Downloaded to {local_path}"
+
+    def onedrive_count(self, folder_path="/"):
+        """Count files (excluding sub-folders) in a OneDrive folder."""
+        items = self.onedrive_list(folder_path)
+        return sum(1 for item in items if item['type'] == 'file')
 
     # ── OneNote ───────────────────────────────────────────────────────────────
 
@@ -565,25 +755,61 @@ OpenClaw M365 CLI – Microsoft 365 for agents
 
 Commands:
   mail-list [limit]
-      List recent inbox messages (default: 20)
+      List recent inbox messages with IDs (default: 20)
 
-  send-mail <to> <subject> <body>
-      Send an email to any recipient
+  mail-count
+      Count the total number of messages in the inbox
+
+  send-mail <to> <subject> <body> [cc] [attachment_path]
+      Send an email; optionally add a CC recipient and/or attach a local file
+
+  mail-mark-read <message_id>
+      Mark a specific message as read (use the ID from mail-list)
+
+  mail-move <message_id> <folder_name>
+      Move a message to a named mail folder
+
+  mail-folder-create <folder_name>
+      Create a new mail folder
 
   calendar-list [days]
       List upcoming events (default: 7 days)
 
+  calendar-count [days]
+      Count upcoming calendar events (default: 7 days)
+
   calendar-create <subject> <start_iso> <end_iso> [body]
       Create a calendar event (ISO 8601, e.g. 2026-04-01T10:00:00)
+
+  calendar-attendees <event_subject>
+      List attendees and their acceptance status for a calendar event
+
+  calendar-shared <other_user_email> [days]
+      List upcoming events from a shared calendar (default: 7 days)
 
   contacts-list [limit]
       List address-book contacts (default: 100)
 
+  contacts-count
+      Count total contacts in the address book
+
+  contacts-newest [limit]
+      List the most recently created contacts (default: 10)
+
   contacts-create <first> <last> [email] [phone]
       Add a new contact
 
+  contacts-update <name> field=value [field=value ...]
+      Update fields on an existing contact (run contacts-fields to see available fields)
+
+  contacts-fields
+      List all contact fields available for use with contacts-update
+
   onedrive-list [folder]
       List files in a OneDrive folder (default: /)
+
+  onedrive-count [folder]
+      Count files (excluding sub-folders) in a OneDrive folder (default: /)
 
   upload <local_path> <remote_path>
       Upload a local file to OneDrive
@@ -630,13 +856,36 @@ def main():
             else:
                 for m in msgs:
                     tag = "" if m['is_read'] else "[NEW] "
-                    print(f"{tag}{m['date']} | {m['from']}: {m['subject']}")
+                    print(f"{tag}{m['date']} | {m['from']}: {m['subject']} [id:{m['id']}]")
+
+        elif cmd == "mail-count":
+            print(client.count_mail())
 
         elif cmd == "send-mail":
             if len(args) < 3:
-                print("Usage: m365 send-mail <to> <subject> <body>")
+                print("Usage: m365 send-mail <to> <subject> <body> [cc] [attachment_path]")
                 sys.exit(1)
-            print(client.send_mail(args[0], args[1], args[2]))
+            cc = args[3] if len(args) > 3 else None
+            attach = args[4] if len(args) > 4 else None
+            print(client.send_mail(args[0], args[1], args[2], cc_addresses=cc, attachment_path=attach))
+
+        elif cmd == "mail-mark-read":
+            if not args:
+                print("Usage: m365 mail-mark-read <message_id>")
+                sys.exit(1)
+            print(client.mail_mark_read(args[0]))
+
+        elif cmd == "mail-move":
+            if len(args) < 2:
+                print("Usage: m365 mail-move <message_id> <folder_name>")
+                sys.exit(1)
+            print(client.mail_move(args[0], args[1]))
+
+        elif cmd == "mail-folder-create":
+            if not args:
+                print("Usage: m365 mail-folder-create <folder_name>")
+                sys.exit(1)
+            print(client.mail_folder_create(args[0]))
 
         elif cmd == "calendar-list":
             days = int(args[0]) if args else 7
@@ -649,12 +898,42 @@ def main():
                     loc = f" @ {e['location']}" if e.get('location') else ""
                     print(f"- {e['start']} | {e['subject']}{loc}")
 
+        elif cmd == "calendar-count":
+            days = int(args[0]) if args else 7
+            print(client.count_calendar_events(days=days))
+
         elif cmd == "calendar-create":
             if len(args) < 3:
                 print("Usage: m365 calendar-create <subject> <start_iso> <end_iso> [body]")
                 sys.exit(1)
             body = args[3] if len(args) > 3 else ""
             print(client.create_calendar_event(args[0], args[1], args[2], body))
+
+        elif cmd == "calendar-attendees":
+            if not args:
+                print("Usage: m365 calendar-attendees <event_subject>")
+                sys.exit(1)
+            result = client.calendar_event_attendees(args[0])
+            if 'error' in result:
+                print(result['error'])
+            else:
+                print(f"Event: {result['subject']}")
+                for att in result['attendees']:
+                    print(f"  {att['name']} <{att['email']}> – {att['status']}")
+
+        elif cmd == "calendar-shared":
+            if not args:
+                print("Usage: m365 calendar-shared <other_user_email> [days]")
+                sys.exit(1)
+            days = int(args[1]) if len(args) > 1 else 7
+            events = client.calendar_shared(args[0], days=days)
+            if not events:
+                print(f"No events in the next {days} days on {args[0]}'s calendar.")
+            else:
+                print(f"Shared calendar events for {args[0]} (next {days} days):")
+                for e in events:
+                    loc = f" @ {e['location']}" if e.get('location') else ""
+                    print(f"- {e['start']} | {e['subject']}{loc}")
 
         elif cmd == "contacts-list":
             limit = int(args[0]) if args else 100
@@ -666,6 +945,20 @@ def main():
                     emails = ", ".join(c['emails']) if c['emails'] else "(no email)"
                     print(f"- {c['name']} | {emails}")
 
+        elif cmd == "contacts-count":
+            print(client.count_contacts())
+
+        elif cmd == "contacts-newest":
+            limit = int(args[0]) if args else 10
+            contacts = client.contacts_newest(limit=limit)
+            if not contacts:
+                print("No contacts found.")
+            else:
+                for c in contacts:
+                    emails = ", ".join(c['emails']) if c['emails'] else "(no email)"
+                    created = f" | created: {c['created']}" if c.get('created') else ""
+                    print(f"- {c['name']} | {emails}{created}")
+
         elif cmd == "contacts-create":
             if len(args) < 2:
                 print("Usage: m365 contacts-create <first> <last> [email] [phone]")
@@ -673,6 +966,24 @@ def main():
             email = args[2] if len(args) > 2 else None
             phone = args[3] if len(args) > 3 else None
             print(client.create_contact(args[0], args[1], email, phone))
+
+        elif cmd == "contacts-update":
+            if len(args) < 2:
+                print("Usage: m365 contacts-update <name> field=value [field=value ...]")
+                sys.exit(1)
+            updates = {}
+            for pair in args[1:]:
+                if '=' in pair:
+                    k, v = pair.split('=', 1)
+                    updates[k] = v
+            print(client.update_contact(args[0], updates))
+
+        elif cmd == "contacts-fields":
+            fields = client.contacts_fields()
+            print(f"{'Field':<20} {'Description':<40} {'Example'}")
+            print("-" * 75)
+            for f in fields:
+                print(f"{f['field']:<20} {f['description']:<40} {f['example']}")
 
         elif cmd == "onedrive-list":
             folder = args[0] if args else "/"
@@ -683,6 +994,10 @@ def main():
                 for item in items:
                     size = f" ({item['size']} B)" if item.get('size') else ""
                     print(f"[{item['type'].upper()}] {item['name']}{size}")
+
+        elif cmd == "onedrive-count":
+            folder = args[0] if args else "/"
+            print(client.onedrive_count(folder))
 
         elif cmd == "upload":
             if len(args) < 2:
@@ -767,29 +1082,119 @@ Credentials stored in: ${CONFIG_FILE}
 
 ## Commands
 
+### Mail
+
 | Command | Description |
 |---------|-------------|
-| mail-list [N] | List N recent inbox messages (default 20) |
-| send-mail <to> <subject> <body> | Send an email |
-| calendar-list [days] | List upcoming events (default 7 days) |
-| calendar-create <subj> <start> <end> [body] | Create a calendar event (ISO 8601) |
-| contacts-list [N] | List N address-book contacts (default 100) |
-| contacts-create <first> <last> [email] [phone] | Add a new contact |
-| onedrive-list [folder] | List a OneDrive folder (default /) |
-| upload <local> <remote> | Upload a file to OneDrive |
-| download <remote> <local> | Download a file from OneDrive |
-| onenote-create <nb> <sec> <title> <html> | Create a OneNote page |
-| excel-update <path> <sheet> <range> [val ...] | Update Excel cells |
-| word-update <path> key=val ... | Replace placeholders in a Word document |
-| ppt-update <path> <slide> key=val ... | Replace text in a PowerPoint slide |
+| m365 mail-list [N] | List N recent inbox messages with IDs (default 20) |
+| m365 mail-count | Count the total number of messages in the inbox |
+| m365 send-mail \<to\> \<subject\> \<body\> [cc] [attachment] | Send an email; optionally add a CC address and/or a local file attachment |
+| m365 mail-mark-read \<message_id\> | Mark a specific message as read (use the ID from mail-list) |
+| m365 mail-move \<message_id\> \<folder_name\> | Move a message to a named mail folder |
+| m365 mail-folder-create \<folder_name\> | Create a new mail folder |
+
+### Calendar
+
+| Command | Description |
+|---------|-------------|
+| m365 calendar-list [days] | List upcoming events (default 7 days) |
+| m365 calendar-count [days] | Count upcoming calendar events (default 7 days) |
+| m365 calendar-create \<subj\> \<start\> \<end\> [body] | Create a calendar event (ISO 8601 dates) |
+| m365 calendar-attendees \<event_subject\> | List attendees and their acceptance status for an event |
+| m365 calendar-shared \<other_user_email\> [days] | List upcoming events from a shared calendar |
+
+### Contacts
+
+| Command | Description |
+|---------|-------------|
+| m365 contacts-list [N] | List N address-book contacts (default 100) |
+| m365 contacts-count | Count total contacts in the address book |
+| m365 contacts-newest [N] | List the N most recently created contacts (default 10) |
+| m365 contacts-create \<first\> \<last\> [email] [phone] | Add a new contact |
+| m365 contacts-update \<name\> field=value ... | Update fields on an existing contact |
+| m365 contacts-fields | List all contact fields available for use with contacts-update |
+
+### OneDrive
+
+| Command | Description |
+|---------|-------------|
+| m365 onedrive-list [folder] | List a OneDrive folder (default /) |
+| m365 onedrive-count [folder] | Count files (excluding sub-folders) in a OneDrive folder (default /) |
+| m365 upload \<local\> \<remote\> | Upload a local file to OneDrive |
+| m365 download \<remote\> \<local\> | Download a file from OneDrive |
+
+### OneNote / Office Documents
+
+| Command | Description |
+|---------|-------------|
+| m365 onenote-create \<nb\> \<sec\> \<title\> \<html\> | Create a OneNote page |
+| m365 excel-update \<path\> \<sheet\> \<range\> [val ...] | Update Excel cells |
+| m365 word-update \<path\> key=val ... | Replace placeholders in a Word document |
+| m365 ppt-update \<path\> \<slide\> key=val ... | Replace text in a PowerPoint slide |
+
+## Examples
+
+\`\`\`bash
+# List last 10 inbox messages (shows IDs needed for mark-read / move)
+m365 mail-list 10
+
+# Count all messages in the inbox
+m365 mail-count
+
+# Send a plain email
+m365 send-mail colleague@company.com "Hello" "Hi there!"
+
+# Send an email with a CC recipient
+m365 send-mail boss@company.com "Report" "Please find attached." cc@company.com
+
+# Send a mail with a file attachment
+m365 send-mail team@company.com "Budget" "See attached." "" /home/user/budget.xlsx
+
+# Mark a message as read (copy <id> from mail-list output)
+m365 mail-mark-read AAMkAGI2...
+
+# Move a message to the Archive folder
+m365 mail-move AAMkAGI2... Archive
+
+# Create a new mail folder called Projects
+m365 mail-folder-create Projects
+
+# Count calendar events in the next 30 days
+m365 calendar-count 30
+
+# List attendees and their RSVP status for a meeting
+m365 calendar-attendees "Q2 Planning"
+
+# Read a colleague's shared calendar
+m365 calendar-shared manager@company.com 14
+
+# Count all contacts
+m365 contacts-count
+
+# List the 5 newest contacts
+m365 contacts-newest 5
+
+# Update a contact's home page and birthday
+m365 contacts-update "John Smith" home_page=https://johnsmith.com birthday=1985-03-22
+
+# See all updatable contact fields
+m365 contacts-fields
+
+# Count files in the Documents folder on OneDrive
+m365 onedrive-count /Documents
+\`\`\`
 
 ## Notes
 - Mail access requires the Exchange Online Application Access Policy in addition to
   the Mail.ReadWrite.All application permission. Ask your Exchange admin to run
   New-ApplicationAccessPolicy (see https://aka.ms/graph-app-access-policy).
-- OneNote requires the delegated permission Notes.ReadWrite.All
-- Excel update uses the Graph API directly; the workbook must not be open in Office
-- Word and PowerPoint use a download → edit locally → re-upload workflow
+- mail-mark-read and mail-move require the message ID shown by mail-list.
+- calendar-attendees searches events by subject substring (case-insensitive).
+- calendar-shared requires Calendars.ReadWrite.All application permission and that
+  the target user's calendar is shared with the service account.
+- OneNote requires the delegated permission Notes.ReadWrite.All.
+- Excel update uses the Graph API directly; the workbook must not be open in Office.
+- Word and PowerPoint use a download → edit locally → re-upload workflow.
 EOF
 
 # 10. Start initial authentication
@@ -831,13 +1236,25 @@ echo ""
 echo "=== Installation complete! ==="
 echo ""
 echo "Available commands:"
-echo "  m365 mail-list              – list recent inbox messages"
-echo "  m365 send-mail <to> <sub> <body>  – send an email"
+echo "  m365 mail-list              – list recent inbox messages (with IDs)"
+echo "  m365 mail-count             – count inbox messages"
+echo "  m365 send-mail <to> <sub> <body> [cc] [attach] – send an email"
+echo "  m365 mail-mark-read <id>    – mark a message as read"
+echo "  m365 mail-move <id> <folder>– move a message to a folder"
+echo "  m365 mail-folder-create <f> – create a mail folder"
 echo "  m365 calendar-list          – list upcoming calendar events"
+echo "  m365 calendar-count [days]  – count upcoming calendar events"
 echo "  m365 calendar-create ...    – create a calendar event"
+echo "  m365 calendar-attendees <subj> – list attendees and their status"
+echo "  m365 calendar-shared <user> – read a shared calendar"
 echo "  m365 contacts-list          – list contacts"
+echo "  m365 contacts-count         – count contacts"
+echo "  m365 contacts-newest [N]    – list newest contacts"
 echo "  m365 contacts-create ...    – add a contact"
+echo "  m365 contacts-update <name> field=val ... – update a contact"
+echo "  m365 contacts-fields        – list updatable contact fields"
 echo "  m365 onedrive-list [folder] – list OneDrive folder"
+echo "  m365 onedrive-count [folder]– count files in a OneDrive folder"
 echo "  m365 upload <local> <remote>  – upload file to OneDrive"
 echo "  m365 download <remote> <local> – download file from OneDrive"
 echo "  m365 onenote-create ...     – create a OneNote page"

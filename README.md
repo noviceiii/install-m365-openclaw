@@ -54,40 +54,26 @@ The installer will:
 > - [Microsoft-ENTRA-ID-installation.md](Microsoft-ENTRA-ID-installation.md) – App registration & permissions
 > - [Microsoft-Exchange-Policy-installation.md](Microsoft-Exchange-Policy-installation.md) – Restrict mailbox access via Exchange Online Application Access Policy (or modern RBAC for Applications)
 
-### Entra ID / Azure AD App Registration
+### Entra ID / Azure AD App Registration – Overview
 
-1. Go to: https://entra.microsoft.com → **App registrations** → **New registration**
+Register a **daemon application** in Microsoft Entra ID and grant the following Microsoft Graph permissions:
 
-   - **Name:** `OpenClaw-M365-Agent` (or similar)  
-   - **Supported account types:** Accounts in this organizational directory only (single tenant)  
-   - **Redirect URI:** leave blank (daemon / public client)
+**Application permissions** (unattended/daemon access):  
+`Mail.ReadWrite.All`, `Mail.Send`, `Calendars.ReadWrite.All`, `Files.ReadWrite.All`, `Contacts.ReadWrite`
 
-2. **API permissions** → **Add a permission** → **Microsoft Graph**
+**Delegated permissions** (required for OneNote):  
+`Notes.ReadWrite.All`, `offline_access`
 
-   **Application permissions** (for unattended / daemon use):  
-   - `Mail.ReadWrite.All`  
-   - `Mail.Send`  
-   - `Calendars.ReadWrite.All`  
-   - `Files.ReadWrite.All`
-   - `Contacts.ReadWrite`
+After registration, create a **client secret** and note down your `TENANT_ID`, `CLIENT_ID`, and `CLIENT_SECRET`.
 
-   **Delegated permissions** (required for OneNote):  
-   - `Notes.ReadWrite.All`  
-   - `offline_access`
+→ For the full step-by-step guide see [Microsoft-ENTRA-ID-installation.md](Microsoft-ENTRA-ID-installation.md)
 
-   → **Grant admin consent for [your organization]**
+### Exchange Online Access Policy – Overview
 
-3. **Certificates & secrets** → **New client secret**
+Exchange Online requires an explicit access policy before the app can read or send mail via the Graph API.
+Use the included `setup-exchange-policy.ps1` script to configure this, or follow the manual steps.
 
-   - **Description:** OpenClaw daemon secret  
-   - **Expires:** 24 months (recommended)  
-   - **Copy the Value** immediately (you won’t see it again)
-
-4. Copy these three values:
-
-   - **Application (client) ID** → `CLIENT_ID`  
-   - **Directory (tenant) ID** → `TENANT_ID`  
-   - **Client Secret Value** → `CLIENT_SECRET`
+→ For the full setup guide see [Microsoft-Exchange-Policy-installation.md](Microsoft-Exchange-Policy-installation.md)
 
 ### After Installation – Enter Credentials
 The installer will prompt you to enter:

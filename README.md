@@ -245,6 +245,23 @@ m365 word-update "Proposals/Offer-2026.docx" "{{Client}}=ACME Corp" "{{Price}}=â
 
 # Update text in a PowerPoint slide
 m365 ppt-update "Presentations/Strategy-2026.pptx" 0 "{{Title}}=2026 Growth Strategy" "{{Subtitle}}=Q2â€“Q4 Outlook"
+
+# To Do: list task lists and tasks
+m365 todo-lists
+m365 todo-tasks AAMk...
+m365 todo-tasks-all --due-before 2026-05-01
+
+# To Do: create, update, complete, delete tasks
+m365 todo-task-create AAMk... "Prepare report" --due 2026-04-15 --note "Include Q1 data"
+m365 todo-task-update AAMk... AAMk2... --title "Prepare final report"
+m365 todo-task-complete AAMk... AAMk2...
+m365 todo-task-delete AAMk... AAMk2...
+
+# To Do: steps, assign, move
+m365 todo-step-add AAMk... AAMk2... "Collect data"
+m365 todo-step-complete AAMk... AAMk2... AAMk3...
+m365 todo-task-assign AAMk... AAMk2... alice@company.com
+m365 todo-task-move AAMk... AAMk2... AAMk4...
 ```
 
 ## Troubleshooting

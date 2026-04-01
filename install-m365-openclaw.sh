@@ -6,8 +6,8 @@
 # - Asks for OpenClaw base directory and M365 user email
 # - Creates proper package structure: src/m365_openclaw/__init__.py
 # - Installs as editable package with correct setup.py
-# - Full M365Client: Mail, Calendar, Contacts, OneDrive, OneNote, Excel, Word, PPT
-# - All 13 CLI commands implemented in __main__.py
+# - Full M365Client: Mail, Calendar, Contacts, OneDrive, OneNote, Excel, Word, PPT, ToDo
+# - All CLI commands implemented in __main__.py (mail, calendar, contacts, OneDrive, ToDo)
 # - SKILL.md generated for automatic OpenClaw agent discovery
 # - M365_USER_EMAIL stored in .env for correct daemon-mode API routing
 # - main_resource set so /me/ resolves under client-credentials flow
@@ -63,7 +63,7 @@ python3 -m venv "${VENV_DIR}"
 "${VENV_DIR}/bin/pip" install --upgrade pip
 "${VENV_DIR}/bin/pip" install \
     O365 msal msal_extensions python-dotenv \
-    python-docx python-pptx openpyxl
+    python-docx python-pptx openpyxl requests
 
 # 4. Create proper package structure and setup.py
 touch "${SRC_DIR}/m365_openclaw/__init__.py"
@@ -76,6 +76,16 @@ setup(
     version='0.2.0',
     packages=find_packages(where='src'),
     package_dir={'': 'src'},
+    install_requires=[
+        'O365',
+        'msal',
+        'msal_extensions',
+        'python-dotenv',
+        'python-docx',
+        'python-pptx',
+        'openpyxl',
+        'requests',
+    ],
 )
 EOF
 
@@ -181,11 +191,14 @@ import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import requests
 from dotenv import load_dotenv
 from O365 import Account
 from O365.utils import FileSystemTokenBackend
 
 load_dotenv()
+
+GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 
 
 def _parse_excel_range(range_str):
@@ -825,6 +838,22 @@ class M365Client:
             fh.write(resp.content)
         return f"Photo saved to {save_path}"
 
+    def update_contact_photo(self, contact_id, photo_path):
+        """Upload a photo for a contact."""
+        url = f"{GRAPH_BASE}/users/{self.user}/contacts/{contact_id}/photo/$value"
+        ext = Path(photo_path).suffix.lower()
+        content_type = "image/jpeg" if ext in ('.jpg', '.jpeg') else "image/png"
+        with open(photo_path, 'rb') as f:
+            data = f.read()
+        self._graph_put(url, data, content_type)
+        return f"Photo updated for contact {contact_id}"
+
+    def delete_contact_photo(self, contact_id):
+        """Delete a contact's photo."""
+        url = f"{GRAPH_BASE}/users/{self.user}/contacts/{contact_id}/photo/$value"
+        self._graph_delete(url)
+        return f"Photo deleted for contact {contact_id}"
+
     # ── OneDrive ─────────────────────────────────────────────────────────────
 
     def onedrive_list(self, folder_path="/"):
@@ -869,8 +898,7 @@ class M365Client:
     def onenote_create_page(self, notebook_name, section_name, title, html_content):
         """
         Create a OneNote page in the given notebook and section.
-        Note: Requires the delegated permission Notes.ReadWrite.All.
-        Application permissions do not support OneNote as of early 2025.
+        Requires the delegated permission Notes.ReadWrite.All.
         """
         try:
             onenote = self.account.onenote()
@@ -917,7 +945,7 @@ class M365Client:
             idx += cols
             values_2d.append(row)
         url = (
-            f"https://graph.microsoft.com/v1.0"
+            f"{GRAPH_BASE}"
             f"/drives/{drive_id}/items/{item_id}"
             f"/workbook/worksheets('{sheet_name}')/range(address='{cell_range}')"
         )
@@ -1187,6 +1215,8 @@ Or via the  m365  wrapper script placed in ~/.local/bin.
 All v0.1.0 commands remain 100% compatible.
 """
 
+import argparse
+import json
 import sys
 
 USAGE = """\
@@ -1275,7 +1305,7 @@ OpenClaw M365 CLI v0.2.0 – Microsoft 365 for agents
 
 ━━━ EXCEL / WORD / POWERPOINT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   excel-update <remote_path> <sheet> <range> [value ...]
-      Update Excel cells, e.g.: excel-update report.xlsx Sheet1 A1:B2 Jan Feb 100 200
+      Update Excel cells
 
   word-update <remote_path> key=value [key=value ...]
       Replace placeholders in a Word document
@@ -1324,6 +1354,61 @@ OpenClaw M365 CLI v0.2.0 – Microsoft 365 for agents
   todo-move-task <from_list_id> <task_id> <to_list_id>
       Move a task to a different list (copy + delete).
 """
+
+
+def _print_json(data):
+    print(json.dumps(data, indent=2, default=str))
+
+
+def _parse_send_mail_args(args):
+    """Parse extended send-mail arguments."""
+    parser = argparse.ArgumentParser(prog="m365 send-mail", add_help=False)
+    parser.add_argument("to")
+    parser.add_argument("subject")
+    parser.add_argument("body")
+    parser.add_argument("--cc", action="append", default=[])
+    parser.add_argument("--bcc", action="append", default=[])
+    parser.add_argument("--importance", default="Normal",
+                        choices=["High", "Normal", "Low"])
+    parser.add_argument("--sensitivity", default="Normal",
+                        choices=["Normal", "Personal", "Private", "Confidential"])
+    parser.add_argument("--attach", action="append", default=[], dest="attachments")
+    parser.add_argument("--delivery-receipt", action="store_true")
+    parser.add_argument("--read-receipt", action="store_true")
+    return parser.parse_args(args)
+
+
+def _parse_calendar_create_args(args):
+    """Parse extended calendar-create arguments."""
+    parser = argparse.ArgumentParser(prog="m365 calendar-create", add_help=False)
+    parser.add_argument("subject")
+    parser.add_argument("start_iso")
+    parser.add_argument("end_iso")
+    parser.add_argument("body", nargs="?", default="")
+    parser.add_argument("--location", default="")
+    parser.add_argument("--required", action="append", default=[], dest="required_attendees")
+    parser.add_argument("--optional", action="append", default=[], dest="optional_attendees")
+    parser.add_argument("--private", action="store_true")
+    parser.add_argument("--reminder-minutes", type=int, default=15)
+    parser.add_argument("--attach", action="append", default=[], dest="attachments")
+    return parser.parse_args(args)
+
+
+def _parse_contacts_create_args(args):
+    """Parse extended contacts-create arguments."""
+    parser = argparse.ArgumentParser(prog="m365 contacts-create", add_help=False)
+    parser.add_argument("first")
+    parser.add_argument("last")
+    parser.add_argument("email_pos", nargs="?", default=None, metavar="email")
+    parser.add_argument("phone_pos", nargs="?", default=None, metavar="phone")
+    parser.add_argument("--email-business", default=None)
+    parser.add_argument("--email-personal", default=None)
+    parser.add_argument("--phone-business", default=None)
+    parser.add_argument("--phone-mobile", default=None)
+    parser.add_argument("--phone-home", default=None)
+    parser.add_argument("--birthday", default=None)
+    parser.add_argument("--notes", default=None)
+    return parser.parse_args(args)
 
 
 def main():
@@ -1819,7 +1904,23 @@ and tasks.  Uses client-credentials (daemon) flow – no browser required after
 initial setup.
 
 ## Configuration
-Credentials stored in: ${CONFIG_FILE}
+Credentials stored in: ~/.openclaw/skills/m365-graph/.env
+
+Required environment variables:
+- TENANT_ID
+- CLIENT_ID
+- CLIENT_SECRET
+- TOKEN_CACHE_PATH
+- M365_USER_EMAIL
+
+## Required Microsoft Graph Permissions
+
+**Application permissions** (unattended/daemon access):
+`Mail.ReadWrite.All`, `Mail.Send`, `Calendars.ReadWrite.All`,
+`Files.ReadWrite.All`, `Contacts.ReadWrite`, `Tasks.ReadWrite`
+
+**Delegated permissions** (required for OneNote):
+`Notes.ReadWrite.All`, `offline_access`
 
 Required Graph API permissions (Application):
   Mail.ReadWrite.All, Mail.Send, Calendars.ReadWrite.All,

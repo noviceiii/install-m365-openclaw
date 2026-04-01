@@ -248,9 +248,11 @@ class M365Client:
 
     def mail_read_by_subject(self, subject, limit=5):
         """Find and return messages matching the subject. Returns list of dicts."""
+        # Escape single quotes in the subject for safe OData filter interpolation.
+        safe_subject = subject.replace("'", "''")
         url = (
             f"{GRAPH_BASE}/users/{self.user}/messages"
-            f"?$filter=contains(subject,'{subject}')"
+            f"?$filter=contains(subject,'{safe_subject}')"
             f"&$top={limit}&$orderby=receivedDateTime desc"
         )
         try:
@@ -656,10 +658,10 @@ class M365Client:
         data = self._graph_get(url)
         tasks = data.get('value', [])
         if due_before:
-            cutoff = datetime.fromisoformat(due_before).replace(tzinfo=timezone.utc)
+            cutoff = datetime.fromisoformat(due_before).astimezone(timezone.utc)
             tasks = [t for t in tasks if self._task_due(t) and self._task_due(t) <= cutoff]
         if due_after:
-            floor = datetime.fromisoformat(due_after).replace(tzinfo=timezone.utc)
+            floor = datetime.fromisoformat(due_after).astimezone(timezone.utc)
             tasks = [t for t in tasks if self._task_due(t) and self._task_due(t) >= floor]
         return tasks
 
@@ -755,7 +757,7 @@ class M365Client:
             target_list_id,
             payload.get('title', ''),
             note=payload.get('body', {}).get('content'),
-            due_date=payload.get('dueDateTime', {}).get('dateTime', '').split('T')[0] or None,
+            due_date=payload.get('dueDateTime', {}).get('dateTime', '').split('T')[0] if payload.get('dueDateTime', {}).get('dateTime') else None,
         )
         self._graph_delete(src_url)
         return created

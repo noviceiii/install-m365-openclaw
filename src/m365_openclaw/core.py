@@ -861,34 +861,44 @@ class M365Client:
         self._graph_delete(url)
         return f"Task list {list_id} deleted"
 
-    def todo_list_tasks(self, list_id, due_after=None):
+    def todo_list_tasks(self, list_id, due_after=None, due_before=None):
         """
         List tasks in a specific task list.
         Args:
-            list_id:   ID of the task list.
-            due_after: Optional ISO 8601 date (e.g. 2026-01-01) to show only tasks
-                       due on or after that date (client-side filter).
+            list_id:    ID of the task list.
+            due_after:  Optional ISO 8601 date (e.g. 2026-01-01) to show only tasks
+                        due on or after that date (client-side filter).
+            due_before: Optional ISO 8601 date (e.g. 2026-01-31) to show only tasks
+                        due on or before that date (client-side filter).
         """
         url = f"{self._base_url()}/todo/lists/{list_id}/tasks?$top=100&$expand=checklistItems"
         data = self._graph_get(url)
         tasks = self._format_tasks(data.get('value', []))
         if due_after:
-            tasks = [t for t in tasks if t.get('due', '') >= due_after]
+            tasks = [t for t in tasks if t.get('due') and t['due'][:10] >= due_after]
+        if due_before:
+            tasks = [t for t in tasks if t.get('due') and t['due'][:10] <= due_before]
         return tasks
 
-    def todo_get_all_tasks(self, due_after=None):
+    def todo_get_all_tasks(self, due_after=None, due_before=None):
         """List all tasks across every task list, optionally filtered by due date."""
         lists_data = self._graph_get(f"{self._base_url()}/todo/lists")
         all_tasks = []
         for lst in lists_data.get('value', []):
             list_id = lst['id']
             list_name = lst.get('displayName', '')
-            tasks = self.todo_list_tasks(list_id, due_after=due_after)
+            tasks = self.todo_list_tasks(list_id, due_after=due_after, due_before=due_before)
             for task in tasks:
                 task['list_name'] = list_name
                 task['list_id'] = list_id
             all_tasks.extend(tasks)
         return all_tasks
+
+    def todo_get_tasks_today(self):
+        """List all tasks due today across every task list."""
+        from datetime import date
+        today = date.today().isoformat()
+        return self.todo_get_all_tasks(due_after=today, due_before=today)
 
     @staticmethod
     def _format_tasks(tasks):

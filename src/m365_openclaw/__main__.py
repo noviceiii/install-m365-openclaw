@@ -118,11 +118,14 @@ OpenClaw M365 CLI v0.3.0 – Microsoft 365 for agents
   todo-delete-list <list_id>
       Delete a task list and all its tasks.
 
-  todo-list-tasks <list_id> [--due-after YYYY-MM-DD]
-      List tasks in a specific list (optionally filtered by due date).
+  todo-list-tasks <list_id> [--due-after YYYY-MM-DD] [--due-before YYYY-MM-DD]
+      List tasks in a specific list (optionally filtered by due date range).
 
-  todo-all-tasks [--due-after YYYY-MM-DD]
-      List all tasks across every task list.
+  todo-all-tasks [--due-after YYYY-MM-DD] [--due-before YYYY-MM-DD]
+      List all tasks across every task list (optionally filtered by due date range).
+
+  todo-task-today
+      List all tasks due today across every task list.
 
   todo-create-task <list_id> <title>
                    [--note text] [--due YYYY-MM-DDT00:00:00]
@@ -569,16 +572,26 @@ def main():
             parser.add_argument('--due-after', default=None,
                                 metavar='YYYY-MM-DD',
                                 help='Only show tasks due on or after this date')
+            parser.add_argument('--due-before', default=None,
+                                metavar='YYYY-MM-DD',
+                                help='Only show tasks due on or before this date')
             pargs = parser.parse_args(args)
-            tasks = client.todo_list_tasks(pargs.list_id, due_after=pargs.due_after)
+            tasks = client.todo_list_tasks(pargs.list_id, due_after=pargs.due_after,
+                                           due_before=pargs.due_before)
             _print_tasks(tasks)
 
         elif cmd == "todo-all-tasks":
             import argparse
             parser = argparse.ArgumentParser(prog='m365 todo-all-tasks')
             parser.add_argument('--due-after', default=None, metavar='YYYY-MM-DD')
+            parser.add_argument('--due-before', default=None, metavar='YYYY-MM-DD')
             pargs = parser.parse_args(args)
-            tasks = client.todo_get_all_tasks(due_after=pargs.due_after)
+            tasks = client.todo_get_all_tasks(due_after=pargs.due_after,
+                                              due_before=pargs.due_before)
+            _print_tasks(tasks, show_list=True)
+
+        elif cmd == "todo-task-today":
+            tasks = client.todo_get_tasks_today()
             _print_tasks(tasks, show_list=True)
 
         elif cmd == "todo-create-task":

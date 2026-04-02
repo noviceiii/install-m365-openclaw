@@ -70,8 +70,13 @@ Required environment variables:
 | todo-list-create \<name\> | Create task list | m365 todo-list-create "Work Tasks" |
 | todo-list-rename \<id\> \<name\> | Rename task list | m365 todo-list-rename AAMk... "New Name" |
 | todo-list-delete \<id\> | Delete task list | m365 todo-list-delete AAMk... |
-| todo-tasks \<list-id\> | List tasks in a list | m365 todo-tasks AAMk... |
-| todo-tasks-all | List all tasks | m365 todo-tasks-all |
+| todo-list-tasks \<list-id\> | List tasks in a list | m365 todo-list-tasks AAMk... |
+| todo-list-tasks \<list-id\> --due-after YYYY-MM-DD | List tasks due on or after a date | m365 todo-list-tasks AAMk... --due-after 2026-04-01 |
+| todo-list-tasks \<list-id\> --due-before YYYY-MM-DD | List tasks due on or before a date | m365 todo-list-tasks AAMk... --due-before 2026-04-30 |
+| todo-all-tasks | List all tasks | m365 todo-all-tasks |
+| todo-all-tasks --due-after YYYY-MM-DD | List all tasks due on or after a date | m365 todo-all-tasks --due-after 2026-04-01 |
+| todo-all-tasks --due-before YYYY-MM-DD | List all tasks due on or before a date | m365 todo-all-tasks --due-before 2026-04-30 |
+| todo-task-today | List all tasks due today | m365 todo-task-today |
 | todo-task-create \<list-id\> \<title\> [opts] | Create task | m365 todo-task-create AAMk... "Buy groceries" --due 2026-04-15 |
 | todo-task-update \<list-id\> \<task-id\> [opts] | Update task | m365 todo-task-update AAMk... AAMk2... --title "Buy organic groceries" |
 | todo-task-complete \<list-id\> \<task-id\> | Complete task | m365 todo-task-complete AAMk... AAMk2... |

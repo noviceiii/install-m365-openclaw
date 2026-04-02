@@ -40,6 +40,7 @@ This guide explains how to register a daemon application in Microsoft Entra ID (
    - `Calendars.ReadWrite.All`  
    - `Files.ReadWrite.All`
    - `Contacts.ReadWrite`
+   - `Tasks.ReadWrite.All`
 
    **Delegated permissions** (needed for OneNote):
    - `Notes.ReadWrite.All`  
@@ -90,9 +91,8 @@ Paste these three values into the .env file created by the installer:
 ```
 Run the CLI once to perform initial authentication:
 ```bash
-m365
+m365 calendar-list
 ```
-→ The script will guide you through the first login/consent (may open a browser or show a URL to copy-paste if running headless).
 → After this step, the token is cached and auto-refreshes silently forever.
 
 ### Common issues & fixes
@@ -102,7 +102,7 @@ m365
   Go back to step 2.4 and click **Grant admin consent for [your organization]**.
 
 - **"Insufficient privileges"** when accessing mail, calendar or files  
-  → Check that the **application permissions** (`Mail.ReadWrite.All`, `Calendars.ReadWrite.All`, `Files.ReadWrite.All`, etc.) are correctly added **and** that admin consent was granted.
+  → Check that the **application permissions** (`Mail.ReadWrite.All`, `Mail.Send`, `Calendars.ReadWrite.All`, `Files.ReadWrite.All`, etc.) are correctly added **and** that admin consent was granted.
 
 - **OneNote not working**  
   → Make sure the **delegated permissions** `Notes.ReadWrite.All` and `offline_access` are added (not application permissions).  
@@ -110,17 +110,17 @@ m365
 
 - **Secret expired**  
   → Create a new client secret in the Entra portal (Certificates & secrets → New client secret).  
-  Update the `CLIENT_SECRET` value in `~/.openclaw/skills/m365-graph/.env`, then run `m365` again to re-authenticate.
+  Update the `CLIENT_SECRET` value in `~/.openclaw/skills/m365-graph/.env`, then run `m365 calendar-list` again to re-authenticate.
 
 You are now fully set up for **unattended Microsoft 365 access** from your OpenClaw agents!  
 All subsequent operations (sending mail, updating Excel, creating OneNote pages, etc.) work **without any further login**.
 
 ---
 
-## Step 5 – Exchange Online Access Policy (mandatory for Mail access)
+## Step 5 – Exchange Online Access (mandatory for Mail access)
 
-Microsoft Exchange Online requires an explicit access policy before the Entra app can read or send mail via the Graph API.
+Microsoft Exchange Online requires explicit access configuration before the Entra app can read or send mail via the Graph API.
 This is separate from the Graph API permissions granted in Step 2.
 
-→ For the full setup guide (including RBAC for Applications and the included PowerShell script) see:
+→ For the full setup guide (RBAC for Applications – recommended) see:
 [Microsoft-Exchange-Policy-installation.md](Microsoft-Exchange-Policy-installation.md)

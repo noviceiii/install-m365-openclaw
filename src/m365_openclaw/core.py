@@ -1,8 +1,8 @@
 """
-core.py – Microsoft 365 client for OpenClaw agents.
+core.py – Microsoft 365 client for OpenClaw agents (v0.3.0).
 
 Supports: Mail, Calendar, Contacts, OneDrive, OneNote, Excel, Word, PowerPoint,
-          ToDo Tasks.
+          Microsoft ToDo tasks.
 Uses client-credentials (daemon/application) flow via the O365 library + MSAL.
 
 Important: When using application permissions (client_credentials flow), all
@@ -10,7 +10,7 @@ Graph API calls must target a specific user.  Set M365_USER_EMAIL in .env so
 that main_resource resolves /me/ to /users/<email>/ automatically.
 """
 
-import json
+import base64
 import os
 import re
 import sys
@@ -93,116 +93,157 @@ class M365Client:
         token = self.account.connection.token_backend.token
         return token.get('access_token', '')
 
-    def _auth_headers(self, content_type="application/json"):
+    def _graph_headers(self, content_type='application/json'):
         headers = {'Authorization': f'Bearer {self._access_token()}'}
         if content_type:
             headers['Content-Type'] = content_type
         return headers
 
-    def _graph_get(self, url):
-        """HTTP GET to Graph API."""
-        resp = requests.get(url, headers=self._auth_headers(content_type=None), timeout=30)
+    def _graph_get(self, url, params=None):
+        """HTTP GET against the Microsoft Graph API."""
+        import requests as req
+        resp = req.get(url, headers=self._graph_headers(), params=params, timeout=30)
         resp.raise_for_status()
         return resp.json() if resp.content else {}
 
-    def _graph_post(self, url, data=None, json_data=None):
-        """HTTP POST to Graph API."""
-        payload = json_data if json_data is not None else data
-        resp = requests.post(url, headers=self._auth_headers(), json=payload, timeout=30)
+    def _graph_post(self, url, data=None, content_type='application/json', raw_data=None):
+        """HTTP POST to the Microsoft Graph API."""
+        import requests as req
+        headers = self._graph_headers(content_type=content_type)
+        if raw_data is not None:
+            resp = req.post(url, headers=headers, data=raw_data, timeout=30)
+        else:
+            resp = req.post(url, headers=headers, json=data, timeout=30)
         resp.raise_for_status()
         return resp.json() if resp.content else {}
 
     def _graph_patch(self, url, data):
         """HTTP PATCH to the Microsoft Graph API with JSON body."""
-        resp = requests.patch(url, headers=self._auth_headers(), json=data, timeout=30)
+        import requests as req
+        resp = req.patch(url, headers=self._graph_headers(), json=data, timeout=30)
         resp.raise_for_status()
         return resp.json() if resp.content else {}
 
     def _graph_delete(self, url):
-        """HTTP DELETE to Graph API."""
-        resp = requests.delete(url, headers=self._auth_headers(content_type=None), timeout=30)
+        """HTTP DELETE to the Microsoft Graph API."""
+        import requests as req
+        resp = req.delete(url, headers=self._graph_headers(content_type=None), timeout=30)
         resp.raise_for_status()
         return {}
 
-    def _graph_put(self, url, data, content_type):
-        """HTTP PUT to Graph API (used for binary uploads)."""
-        headers = {
-            'Authorization': f'Bearer {self._access_token()}',
-            'Content-Type': content_type,
-        }
-        resp = requests.put(url, headers=headers, data=data, timeout=60)
+    def _graph_put(self, url, data, content_type='application/octet-stream'):
+        """HTTP PUT to the Microsoft Graph API (used for binary uploads)."""
+        import requests as req
+        resp = req.put(url, headers=self._graph_headers(content_type=content_type),
+                       data=data, timeout=60)
         resp.raise_for_status()
         return resp.json() if resp.content else {}
 
-    # ── Mail ──────────────────────────────────────────────────────────────────
+    def _base_url(self):
+        """Return the per-user Graph API base URL."""
+        return f"https://graph.microsoft.com/v1.0/users/{self.user}"
+
+    # ── Mail – error helper ───────────────────────────────────────────────────
 
     @staticmethod
     def _raise_if_mail_403(exc):
         """Re-raise with actionable guidance when a 403 occurs on a mail endpoint."""
-        if isinstance(exc, requests.exceptions.HTTPError):
-            resp = getattr(exc, 'response', None)
-            if resp is not None and resp.status_code == 403:
-                url = getattr(resp, 'url', '') or ''
-                if 'mailFolders' in url or '/messages' in url:
-                    raise PermissionError(
-                        "Mail access denied (HTTP 403 Forbidden).\n"
-                        "\n"
-                        "Common causes and fixes:\n"
-                        "  1. The 'Mail.ReadWrite.All' application permission is not\n"
-                        "     admin-consented in your Azure App Registration.\n"
-                        "     Go to: Entra ID → App registrations → <your app>\n"
-                        "             → API permissions → Grant admin consent\n"
-                        "\n"
-                        "  2. Exchange Online requires an Application Access Policy for\n"
-                        "     mail access via application credentials (daemon/app flow).\n"
-                        "     Ask your Exchange admin to run this in Exchange Online PowerShell:\n"
-                        "\n"
-                        "       New-ApplicationAccessPolicy \\\n"
-                        "         -AppId <CLIENT_ID> \\\n"
-                        "         -PolicyScopeGroupId <M365_USER_EMAIL> \\\n"
-                        "         -AccessRight RestrictAccess \\\n"
-                        "         -Description 'OpenClaw M365 mail access'\n"
-                        "\n"
-                        "     Reference: https://aka.ms/graph-app-access-policy"
-                    ) from exc
+        try:
+            import requests
+            if isinstance(exc, requests.exceptions.HTTPError):
+                resp = getattr(exc, 'response', None)
+                if resp is not None and resp.status_code == 403:
+                    url = getattr(resp, 'url', '') or ''
+                    if 'mailFolders' in url or '/messages' in url or 'sendMail' in url:
+                        raise PermissionError(
+                            "Mail access denied (HTTP 403 Forbidden).\n"
+                            "\n"
+                            "Common causes and fixes:\n"
+                            "  1. The 'Mail.ReadWrite.All' and 'Mail.Send' application permissions\n"
+                            "     are not admin-consented in your Entra ID App Registration.\n"
+                            "     Go to: Entra ID → App registrations → <your app>\n"
+                            "             → API permissions → Grant admin consent\n"
+                            "\n"
+                            "  2. Exchange Online requires RBAC for Applications (recommended)\n"
+                            "     for mail access via application credentials (daemon/app flow).\n"
+                            "     Follow Microsoft-Exchange-Policy-installation.md to configure\n"
+                            "     RBAC for Applications using setup-exchange-policy.ps1.\n"
+                            "\n"
+                            "     Reference: https://learn.microsoft.com/en-us/exchange/permissions-exo/rbac-for-applications\n"
+                            "\n"
+                            "  Note: The legacy Application Access Policy (New-ApplicationAccessPolicy)\n"
+                            "        is deprecated. Use RBAC for Applications instead."
+                        ) from exc
+        except ImportError:
+            pass
+
+    # ── Mail ──────────────────────────────────────────────────────────────────
 
     def send_mail(self, to_address, subject, body, cc=None, bcc=None,
-                  sensitivity="Normal", importance="Normal", attachments=None,
+                  sensitivity='Normal', importance='Normal', attachments=None,
                   request_delivery_receipt=False, request_read_receipt=False):
-        """Send an email with optional CC, BCC, attachments, and receipt requests."""
+        """
+        Send an email via the Graph API with full feature support.
+
+        Args:
+            to_address: Recipient address string or list of strings.
+            subject:    Email subject.
+            body:       Email body (plain text or HTML).
+            cc:         CC address string or list of strings (optional).
+            bcc:        BCC address string or list of strings (optional).
+            sensitivity: Normal | Personal | Private | Confidential (default: Normal).
+            importance:  High | Normal | Low (default: Normal).
+            attachments: Local file path string or list of paths (optional).
+            request_delivery_receipt: Request delivery receipt (default: False).
+            request_read_receipt:     Request read receipt (default: False).
+        """
+        def _recipients(addrs):
+            if not addrs:
+                return []
+            if isinstance(addrs, str):
+                addrs = [addrs]
+            return [{'emailAddress': {'address': a.strip()}} for a in addrs if a.strip()]
+
+        message = {
+            'subject': subject,
+            'body': {'contentType': 'HTML', 'content': body},
+            'toRecipients': _recipients(to_address),
+            'importance': importance,
+            'sensitivity': sensitivity,
+            'isDeliveryReceiptRequested': request_delivery_receipt,
+            'isReadReceiptRequested': request_read_receipt,
+        }
+        if cc:
+            message['ccRecipients'] = _recipients(cc)
+        if bcc:
+            message['bccRecipients'] = _recipients(bcc)
+
+        # Add file attachments encoded as base64
+        if attachments:
+            att_list = attachments if isinstance(attachments, list) else [attachments]
+            graph_atts = []
+            for att_path in att_list:
+                with open(att_path, 'rb') as fh:
+                    content_b64 = base64.b64encode(fh.read()).decode()
+                graph_atts.append({
+                    '@odata.type': '#microsoft.graph.fileAttachment',
+                    'name': Path(att_path).name,
+                    'contentBytes': content_b64,
+                })
+            message['attachments'] = graph_atts
+
+        url = f"{self._base_url()}/sendMail"
         try:
-            m = self.account.mailbox().new_message()
-            if isinstance(to_address, list):
-                for addr in to_address:
-                    m.to.add(addr)
-            else:
-                m.to.add(to_address)
-            m.subject = subject
-            m.body = body
-            if cc:
-                for addr in ([cc] if isinstance(cc, str) else cc):
-                    m.cc.add(addr)
-            if bcc:
-                for addr in ([bcc] if isinstance(bcc, str) else bcc):
-                    m.bcc.add(addr)
-            m.sensitivity = sensitivity
-            m.importance = importance
-            if attachments:
-                for path in attachments:
-                    m.attachments.add(path)
-            if request_delivery_receipt:
-                m.request_delivery_receipt = True
-            if request_read_receipt:
-                m.request_read_receipt = True
-            m.send()
+            self._graph_post(url, {'message': message, 'saveToSentItems': True})
         except Exception as exc:
             self._raise_if_mail_403(exc)
             raise
-        to_str = to_address if isinstance(to_address, str) else ", ".join(to_address)
-        return f"Email sent to {to_str}"
+
+        recipients = to_address if isinstance(to_address, list) else [to_address]
+        return f"Email sent to {', '.join(recipients)}"
 
     def list_mail(self, limit=20):
-        """Return recent messages from the inbox."""
+        """Return recent messages from the inbox, including message IDs for follow-up."""
         try:
             messages = self.account.mailbox().inbox_folder().get_messages(limit=limit)
         except Exception as exc:
@@ -219,121 +260,134 @@ class M365Client:
             })
         return result
 
-    def mail_list(self, limit=20, folder="inbox"):
-        """List messages from a folder: 'inbox', 'sent', 'drafts', 'deleted'."""
-        folder_map = {
-            "inbox": "inbox",
-            "sent": "sentitems",
-            "drafts": "drafts",
-            "deleted": "deleteditems",
-        }
-        folder_id = folder_map.get(folder.lower(), folder)
-        url = f"{GRAPH_BASE}/users/{self.user}/mailFolders/{folder_id}/messages?$top={limit}&$orderby=receivedDateTime desc"
-        try:
-            data = self._graph_get(url)
-        except requests.exceptions.HTTPError as exc:
-            self._raise_if_mail_403(exc)
-            raise
-        result = []
-        for msg in data.get('value', []):
-            sender = msg.get('from', {}).get('emailAddress', {})
-            result.append({
-                'id': msg.get('id'),
-                'subject': msg.get('subject') or '(no subject)',
-                'from': sender.get('address', ''),
-                'date': msg.get('receivedDateTime'),
-                'is_read': msg.get('isRead', True),
-            })
-        return result
-
-    def mail_read_by_subject(self, subject, limit=5):
-        """Find and return messages matching the subject. Returns list of dicts."""
-        # Escape single quotes in the subject for safe OData filter interpolation.
-        safe_subject = subject.replace("'", "''")
+    def search_mail(self, subject_query, limit=10):
+        """
+        Search inbox messages by subject keyword.
+        Returns a list of matching messages including their IDs, body content,
+        and sender details – ready for follow-up actions (reply, forward, etc.).
+        """
         url = (
-            f"{GRAPH_BASE}/users/{self.user}/messages"
-            f"?$filter=contains(subject,'{safe_subject}')"
-            f"&$top={limit}&$orderby=receivedDateTime desc"
+            f"{self._base_url()}/mailFolders/inbox/messages"
+            f"?$top={limit}"
+            f"&$select=id,subject,from,receivedDateTime,isRead,body"
         )
+        # OData 'contains' filter on subject
+        url += f"&$filter=contains(subject,'{subject_query}')"
         try:
             data = self._graph_get(url)
-        except requests.exceptions.HTTPError as exc:
+        except Exception as exc:
             self._raise_if_mail_403(exc)
             raise
         result = []
         for msg in data.get('value', []):
-            sender = msg.get('from', {}).get('emailAddress', {})
             result.append({
-                'id': msg.get('id'),
-                'subject': msg.get('subject') or '(no subject)',
-                'from': sender.get('address', ''),
-                'date': msg.get('receivedDateTime'),
+                'id': msg.get('id', ''),
+                'subject': msg.get('subject', '(no subject)'),
+                'from_address': msg.get('from', {}).get('emailAddress', {}).get('address', ''),
+                'from_name': msg.get('from', {}).get('emailAddress', {}).get('name', ''),
+                'date': msg.get('receivedDateTime', ''),
+                'is_read': msg.get('isRead', False),
                 'body': msg.get('body', {}).get('content', ''),
             })
         return result
 
-    def mail_read_headers(self, message_id):
-        """Return internet message headers of a specific message."""
-        url = f"{GRAPH_BASE}/users/{self.user}/messages/{message_id}?$select=internetMessageHeaders,subject,from,receivedDateTime"
+    def get_mail_headers(self, message_id):
+        """Return headers and metadata for a specific message by ID."""
+        url = (
+            f"{self._base_url()}/messages/{message_id}"
+            f"?$select=id,subject,from,toRecipients,ccRecipients,"
+            f"receivedDateTime,sentDateTime,importance,sensitivity,"
+            f"isRead,hasAttachments"
+        )
         try:
-            return self._graph_get(url)
-        except requests.exceptions.HTTPError as exc:
+            msg = self._graph_get(url)
+        except Exception as exc:
             self._raise_if_mail_403(exc)
             raise
-
-    def mail_reply(self, message_id, body):
-        """Reply to the sender of a message."""
-        url = f"{GRAPH_BASE}/users/{self.user}/messages/{message_id}/reply"
-        try:
-            self._graph_post(url, json_data={"comment": body})
-        except requests.exceptions.HTTPError as exc:
-            self._raise_if_mail_403(exc)
-            raise
-        return "Reply sent"
-
-    def mail_reply_all(self, message_id, body):
-        """Reply to all recipients of a message."""
-        url = f"{GRAPH_BASE}/users/{self.user}/messages/{message_id}/replyAll"
-        try:
-            self._graph_post(url, json_data={"comment": body})
-        except requests.exceptions.HTTPError as exc:
-            self._raise_if_mail_403(exc)
-            raise
-        return "Reply-all sent"
-
-    def mail_forward(self, message_id, to_address, body=""):
-        """Forward a message to a new recipient."""
-        url = f"{GRAPH_BASE}/users/{self.user}/messages/{message_id}/forward"
-        payload = {
-            "comment": body,
-            "toRecipients": [{"emailAddress": {"address": to_address}}],
+        return {
+            'id': msg.get('id', ''),
+            'subject': msg.get('subject', '(no subject)'),
+            'from': msg.get('from', {}).get('emailAddress', {}),
+            'to': [r.get('emailAddress', {}) for r in msg.get('toRecipients', [])],
+            'cc': [r.get('emailAddress', {}) for r in msg.get('ccRecipients', [])],
+            'date_received': msg.get('receivedDateTime', ''),
+            'date_sent': msg.get('sentDateTime', ''),
+            'importance': msg.get('importance', ''),
+            'sensitivity': msg.get('sensitivity', ''),
+            'is_read': msg.get('isRead', False),
+            'has_attachments': msg.get('hasAttachments', False),
         }
+
+    def reply_mail(self, message_id, body):
+        """Reply to the sender of a message (reply to sender only)."""
+        url = f"{self._base_url()}/messages/{message_id}/reply"
         try:
-            self._graph_post(url, json_data=payload)
-        except requests.exceptions.HTTPError as exc:
+            self._graph_post(url, {'message': {}, 'comment': body})
+        except Exception as exc:
             self._raise_if_mail_403(exc)
             raise
-        return f"Message forwarded to {to_address}"
+        return f"Reply sent for message {message_id}"
 
-    def mail_delete(self, message_id):
-        """Delete a message by ID."""
-        url = f"{GRAPH_BASE}/users/{self.user}/messages/{message_id}"
+    def reply_all_mail(self, message_id, body):
+        """Reply to all recipients of a message."""
+        url = f"{self._base_url()}/messages/{message_id}/replyAll"
+        try:
+            self._graph_post(url, {'message': {}, 'comment': body})
+        except Exception as exc:
+            self._raise_if_mail_403(exc)
+            raise
+        return f"Reply-All sent for message {message_id}"
+
+    def forward_mail(self, message_id, to_address, body=""):
+        """Forward a message to one or more new recipients."""
+        if isinstance(to_address, str):
+            to_address = [to_address]
+        url = f"{self._base_url()}/messages/{message_id}/forward"
+        try:
+            self._graph_post(url, {
+                'comment': body,
+                'toRecipients': [
+                    {'emailAddress': {'address': a.strip()}} for a in to_address
+                ],
+            })
+        except Exception as exc:
+            self._raise_if_mail_403(exc)
+            raise
+        return f"Message forwarded to {', '.join(to_address)}"
+
+    def delete_mail(self, message_id):
+        """Permanently delete a message by ID."""
+        url = f"{self._base_url()}/messages/{message_id}"
         try:
             self._graph_delete(url)
-        except requests.exceptions.HTTPError as exc:
+        except Exception as exc:
             self._raise_if_mail_403(exc)
             raise
-        return "Message deleted"
+        return f"Message {message_id} deleted"
 
-    def mail_move(self, message_id, folder_name):
-        """Move a message to a named folder."""
-        url = f"{GRAPH_BASE}/users/{self.user}/messages/{message_id}/move"
+    def move_mail(self, message_id, destination_folder):
+        """
+        Move a message to another mail folder.
+        Use well-known names: inbox, sent, drafts, deleted, archive, junk.
+        Or provide a folder ID directly.
+        """
+        well_known = {
+            'inbox': 'inbox',
+            'sent': 'sentitems',
+            'drafts': 'drafts',
+            'deleted': 'deleteditems',
+            'archive': 'archive',
+            'junk': 'junkemail',
+        }
+        folder_id = well_known.get(destination_folder.lower(), destination_folder)
+        url = f"{self._base_url()}/messages/{message_id}/move"
         try:
-            self._graph_post(url, json_data={"destinationId": folder_name})
-        except requests.exceptions.HTTPError as exc:
+            result = self._graph_post(url, {'destinationId': folder_id})
+        except Exception as exc:
             self._raise_if_mail_403(exc)
             raise
-        return f"Message moved to {folder_name}"
+        new_id = result.get('id', message_id)
+        return f"Message moved to '{destination_folder}' (new ID: {new_id})"
 
     # ── Calendar ──────────────────────────────────────────────────────────────
 
@@ -359,109 +413,255 @@ class M365Client:
         return upcoming
 
     def create_calendar_event(self, subject, start_iso, end_iso, body="", location="",
-                              required_attendees=None, optional_attendees=None,
-                              is_private=False, reminder_minutes=15, attachments=None):
-        """Create a calendar event with attendees, privacy, and reminder support."""
-        schedule = self.account.schedule()
-        calendar = schedule.get_default_calendar()
-        event = calendar.new_event()
-        event.subject = subject
-        event.body = body
+                               required_attendees=None, optional_attendees=None,
+                               is_private=False, reminder_minutes=None, attachment=None):
+        """
+        Create a calendar event via Graph API with extended options.
+
+        Args:
+            subject:             Event title.
+            start_iso:           Start time in ISO 8601 format (e.g. 2026-04-15T10:00:00).
+            end_iso:             End time in ISO 8601 format.
+            body:                Event description/body text (optional).
+            location:            Location or address (optional).
+            required_attendees:  Email string or list of emails for required attendees.
+            optional_attendees:  Email string or list of emails for optional attendees.
+            is_private:          Mark event as private (default: False).
+            reminder_minutes:    Minutes before event to trigger a reminder (optional).
+            attachment:          Local file path to attach to the event (optional).
+        """
+        event_data = {
+            'subject': subject,
+            'body': {'contentType': 'HTML', 'content': body},
+            'start': {'dateTime': start_iso, 'timeZone': 'UTC'},
+            'end': {'dateTime': end_iso, 'timeZone': 'UTC'},
+            'sensitivity': 'private' if is_private else 'normal',
+        }
         if location:
-            event.location = location
-        event.start = datetime.fromisoformat(start_iso)
-        event.end = datetime.fromisoformat(end_iso)
+            event_data['location'] = {'displayName': location}
+
+        # Build attendees list
+        attendees = []
         if required_attendees:
+            if isinstance(required_attendees, str):
+                required_attendees = [required_attendees]
             for email in required_attendees:
-                event.attendees.add(email, attendee_type='required')
+                attendees.append({'emailAddress': {'address': email.strip()}, 'type': 'required'})
         if optional_attendees:
+            if isinstance(optional_attendees, str):
+                optional_attendees = [optional_attendees]
             for email in optional_attendees:
-                event.attendees.add(email, attendee_type='optional')
-        if is_private:
-            event.sensitivity = 'private'
-        event.remind_before_minutes = reminder_minutes
-        if attachments:
-            for path in attachments:
-                event.attachments.add(path)
-        event.save()
-        return f"Event '{subject}' created"
+                attendees.append({'emailAddress': {'address': email.strip()}, 'type': 'optional'})
+        if attendees:
+            event_data['attendees'] = attendees
+
+        # Reminder
+        if reminder_minutes is not None:
+            event_data['isReminderOn'] = True
+            event_data['reminderMinutesBeforeStart'] = int(reminder_minutes)
+
+        # File attachment (base64)
+        if attachment:
+            with open(attachment, 'rb') as fh:
+                content_b64 = base64.b64encode(fh.read()).decode()
+            event_data['attachments'] = [{
+                '@odata.type': '#microsoft.graph.fileAttachment',
+                'name': Path(attachment).name,
+                'contentBytes': content_b64,
+            }]
+
+        url = f"{self._base_url()}/calendar/events"
+        result = self._graph_post(url, event_data)
+        event_id = result.get('id', '')
+        return f"Event '{subject}' created (ID: {event_id})"
 
     # ── Contacts ──────────────────────────────────────────────────────────────
 
     def list_contacts(self, limit=100):
-        """List contacts: first name, last name, biz email, personal email, phones."""
-        address_book = self.account.address_book()
-        contacts = address_book.get_contacts(limit=limit)
+        """
+        List contacts. Returns columns: ID, first name, last name, work email,
+        personal email, work phone, home phone, mobile phone.
+        """
+        url = (
+            f"{self._base_url()}/contacts"
+            f"?$top={limit}"
+            f"&$select=id,givenName,surname,displayName,emailAddresses,"
+            f"businessPhones,homePhones,mobilePhone"
+        )
+        data = self._graph_get(url)
         result = []
-        for contact in contacts:
-            emails_raw = list(contact.emails) if hasattr(contact, 'emails') and contact.emails else []
-            email_biz = None
-            email_personal = None
-            for e in emails_raw:
-                e_str = str(e)
-                addr_type = getattr(e, 'email_type', '') or ''
-                if 'work' in addr_type.lower() or 'business' in addr_type.lower():
-                    email_biz = email_biz or e_str
-                elif 'home' in addr_type.lower() or 'personal' in addr_type.lower():
-                    email_personal = email_personal or e_str
-                else:
-                    email_biz = email_biz or e_str
-
-            biz_phones = list(contact.business_phones) if hasattr(contact, 'business_phones') and contact.business_phones else []
-            home_phones = list(contact.home_phones) if hasattr(contact, 'home_phones') and contact.home_phones else []
-            mobile_phones = list(contact.mobile_phone) if hasattr(contact, 'mobile_phone') and contact.mobile_phone else []
-
+        for c in data.get('value', []):
+            emails = c.get('emailAddresses', [])
+            # First email is treated as work, second as home if no type label
+            work_email = ''
+            home_email = ''
+            for e in emails:
+                name_lc = e.get('name', '').lower()
+                addr = e.get('address', '')
+                if name_lc in ('work', 'geschäft', 'business') and not work_email:
+                    work_email = addr
+                elif name_lc in ('home', 'personal', 'privat') and not home_email:
+                    home_email = addr
+                elif not work_email:
+                    work_email = addr
+                elif not home_email:
+                    home_email = addr
             result.append({
-                'id': contact.object_id,
-                'given_name': contact.given_name or '',
-                'surname': contact.surname or '',
-                'email_business': email_biz,
-                'email_personal': email_personal,
-                'phone_business': biz_phones[0] if biz_phones else None,
-                'phone_mobile': mobile_phones[0] if mobile_phones else None,
-                'phone_home': home_phones[0] if home_phones else None,
+                'id': c.get('id', ''),
+                'first_name': c.get('givenName', ''),
+                'last_name': c.get('surname', ''),
+                'display_name': c.get('displayName', ''),
+                'work_email': work_email,
+                'home_email': home_email,
+                'work_phone': (c.get('businessPhones') or [''])[0],
+                'home_phone': (c.get('homePhones') or [''])[0],
+                'mobile_phone': c.get('mobilePhone', ''),
             })
         return result
 
-    def get_contact(self, contact_id):
-        """Get all fields of a specific contact by ID."""
-        url = f"{GRAPH_BASE}/users/{self.user}/contacts/{contact_id}"
-        return self._graph_get(url)
+    def get_contact(self, name):
+        """
+        Get all available fields for the first contact whose display name contains *name*.
+        Returns None if no match is found.
+        """
+        url = (
+            f"{self._base_url()}/contacts"
+            f"?$top=5"
+            f"&$filter=contains(displayName,'{name}')"
+        )
+        data = self._graph_get(url)
+        contacts = data.get('value', [])
+        if not contacts:
+            return None
+        c = contacts[0]
+        return {
+            'id': c.get('id', ''),
+            'display_name': c.get('displayName', ''),
+            'first_name': c.get('givenName', ''),
+            'last_name': c.get('surname', ''),
+            'company': c.get('companyName', ''),
+            'job_title': c.get('jobTitle', ''),
+            'emails': c.get('emailAddresses', []),
+            'business_phones': c.get('businessPhones', []),
+            'home_phones': c.get('homePhones', []),
+            'mobile_phone': c.get('mobilePhone', ''),
+            'business_address': c.get('businessAddress', {}),
+            'home_address': c.get('homeAddress', {}),
+            'birthday': c.get('birthday', ''),
+            'anniversary': c.get('anniversary', ''),
+            'spouse_name': c.get('spouseName', ''),
+            'websites': c.get('websites', []),
+            'personal_notes': c.get('personalNotes', ''),
+        }
 
     def create_contact(self, given_name, surname, email=None, phone=None,
-                       email_business=None, email_personal=None,
-                       phone_business=None, phone_mobile=None, phone_home=None,
-                       street_business=None, city_business=None, zip_business=None, country_business=None,
-                       street_personal=None, city_personal=None, zip_personal=None, country_personal=None,
-                       birthday=None, anniversary=None, website_business=None, website_personal=None,
-                       spouse=None, notes=None):
-        """Create a new contact. Legacy positional args email/phone map to biz email/phone."""
-        email_business = email_business or email
-        phone_business = phone_business or phone
+                        work_email=None, home_email=None,
+                        work_phone=None, home_phone=None, mobile_phone=None,
+                        work_street=None, work_city=None, work_state=None,
+                        work_zip=None, work_country=None,
+                        home_street=None, home_city=None, home_state=None,
+                        home_zip=None, home_country=None,
+                        birthday=None, anniversary=None,
+                        website=None, work_website=None,
+                        spouse=None, notes=None):
+        """
+        Create a new contact with extended optional fields.
 
-        address_book = self.account.address_book()
-        contact = address_book.new_contact()
-        contact.given_name = given_name
-        contact.surname = surname
-        if email_business:
-            contact.emails.add(email_business, email_type='business')
-        if email_personal:
-            contact.emails.add(email_personal, email_type='personal')
-        if phone_business:
-            contact.business_phones.append(phone_business)
-        if phone_mobile:
-            contact.mobile_phone = phone_mobile
-        if phone_home:
-            contact.home_phones.append(phone_home)
+        Backward compatible: positional 'email' and 'phone' still work as work
+        email and work phone respectively.  All additional fields are optional flags.
+
+        Note: Fields such as hobbies, zodiac sign, and children count are not
+        supported by the Graph API contacts schema.  Include them in the *notes*
+        parameter to preserve the information.
+        """
+        # Build email address list
+        email_list = []
+        resolved_work_email = work_email or email
+        if resolved_work_email:
+            email_list.append({'name': 'Work', 'address': resolved_work_email.strip()})
+        if home_email:
+            email_list.append({'name': 'Home', 'address': home_email.strip()})
+
+        contact_data = {
+            'givenName': given_name,
+            'surname': surname,
+            'emailAddresses': email_list,
+        }
+
+        # Business phones
+        resolved_work_phone = work_phone or phone
+        if resolved_work_phone:
+            contact_data['businessPhones'] = [resolved_work_phone.strip()]
+        if home_phone:
+            contact_data['homePhones'] = [home_phone.strip()]
+        if mobile_phone:
+            contact_data['mobilePhone'] = mobile_phone.strip()
+
+        # Addresses
+        if any([work_street, work_city, work_state, work_zip, work_country]):
+            contact_data['businessAddress'] = {
+                'street': work_street or '',
+                'city': work_city or '',
+                'state': work_state or '',
+                'postalCode': work_zip or '',
+                'countryOrRegion': work_country or '',
+            }
+        if any([home_street, home_city, home_state, home_zip, home_country]):
+            contact_data['homeAddress'] = {
+                'street': home_street or '',
+                'city': home_city or '',
+                'state': home_state or '',
+                'postalCode': home_zip or '',
+                'countryOrRegion': home_country or '',
+            }
+
+        # Personal details
         if birthday:
-            try:
-                contact.birthday = datetime.fromisoformat(birthday)
-            except ValueError:
-                pass
+            contact_data['birthday'] = birthday        # ISO 8601, e.g. 1990-05-15T00:00:00Z
+        if anniversary:
+            contact_data['anniversary'] = anniversary
+        if spouse:
+            contact_data['spouseName'] = spouse
         if notes:
-            contact.personal_notes = notes
-        contact.save()
-        return f"Contact '{given_name} {surname}' created"
+            contact_data['personalNotes'] = notes
+
+        # Websites
+        websites = []
+        if website:
+            websites.append({'type': 'home', 'address': website})
+        if work_website:
+            websites.append({'type': 'work', 'address': work_website})
+        if websites:
+            contact_data['websites'] = websites
+
+        url = f"{self._base_url()}/contacts"
+        result = self._graph_post(url, contact_data)
+        contact_id = result.get('id', '')
+        return f"Contact '{given_name} {surname}' created (ID: {contact_id})"
+
+    def set_contact_photo(self, contact_id, photo_path):
+        """Upload a photo for a contact (JPEG recommended, max 4 MB)."""
+        with open(photo_path, 'rb') as fh:
+            photo_bytes = fh.read()
+        url = f"{self._base_url()}/contacts/{contact_id}/photo/$value"
+        self._graph_put(url, photo_bytes, content_type='image/jpeg')
+        return f"Photo set for contact {contact_id}"
+
+    def delete_contact_photo(self, contact_id):
+        """Delete the profile photo for a contact."""
+        url = f"{self._base_url()}/contacts/{contact_id}/photo/$value"
+        self._graph_delete(url)
+        return f"Photo deleted for contact {contact_id}"
+
+    def get_contact_photo(self, contact_id, save_path):
+        """Download the profile photo of a contact to a local file."""
+        import requests as req
+        url = f"{self._base_url()}/contacts/{contact_id}/photo/$value"
+        resp = req.get(url, headers=self._graph_headers(content_type=None), timeout=30)
+        resp.raise_for_status()
+        with open(save_path, 'wb') as fh:
+            fh.write(resp.content)
+        return f"Photo saved to {save_path}"
 
     def update_contact_photo(self, contact_id, photo_path):
         """Upload a photo for a contact."""
@@ -627,137 +827,204 @@ class M365Client:
             self.onedrive_upload(local, onedrive_path)
         return f"PowerPoint updated: {onedrive_path} (slide {slide_number})"
 
-    # ── ToDo / Tasks ──────────────────────────────────────────────────────────
+    # ── Microsoft ToDo / Tasks ────────────────────────────────────────────────
 
-    def todo_list_lists(self):
-        """Return all To Do task lists."""
-        url = f"{GRAPH_BASE}/users/{self.user}/todo/lists"
+    def todo_list_task_lists(self):
+        """List all Microsoft ToDo task lists. Returns list with id and name."""
+        url = f"{self._base_url()}/todo/lists"
         data = self._graph_get(url)
-        return data.get('value', [])
+        return [
+            {
+                'id': lst.get('id', ''),
+                'name': lst.get('displayName', ''),
+                'is_owner': lst.get('isOwner', True),
+                'is_shared': lst.get('isShared', False),
+            }
+            for lst in data.get('value', [])
+        ]
 
-    def todo_create_list(self, name):
-        """Create a new task list."""
-        url = f"{GRAPH_BASE}/users/{self.user}/todo/lists"
-        result = self._graph_post(url, json_data={"displayName": name})
-        return result
+    def todo_create_task_list(self, name):
+        """Create a new Microsoft ToDo task list with the given name."""
+        url = f"{self._base_url()}/todo/lists"
+        result = self._graph_post(url, {'displayName': name})
+        return f"Task list '{name}' created (ID: {result.get('id', '')})"
 
-    def todo_rename_list(self, list_id, new_name):
-        """Rename a task list."""
-        url = f"{GRAPH_BASE}/users/{self.user}/todo/lists/{list_id}"
-        return self._graph_patch(url, {"displayName": new_name})
+    def todo_rename_task_list(self, list_id, new_name):
+        """Rename an existing task list."""
+        url = f"{self._base_url()}/todo/lists/{list_id}"
+        self._graph_patch(url, {'displayName': new_name})
+        return f"Task list {list_id} renamed to '{new_name}'"
 
-    def todo_delete_list(self, list_id):
-        """Delete a task list."""
-        url = f"{GRAPH_BASE}/users/{self.user}/todo/lists/{list_id}"
+    def todo_delete_task_list(self, list_id):
+        """Delete a task list and all its tasks permanently."""
+        url = f"{self._base_url()}/todo/lists/{list_id}"
         self._graph_delete(url)
         return f"Task list {list_id} deleted"
 
-    def todo_list_tasks(self, list_id, due_before=None, due_after=None):
-        """List all tasks in a list, optionally filtered by due date (YYYY-MM-DD)."""
-        url = f"{GRAPH_BASE}/users/{self.user}/todo/lists/{list_id}/tasks"
+    def todo_list_tasks(self, list_id, due_after=None):
+        """
+        List tasks in a specific task list.
+        Args:
+            list_id:   ID of the task list.
+            due_after: Optional ISO 8601 date (e.g. 2026-01-01) to show only tasks
+                       due on or after that date (client-side filter).
+        """
+        url = f"{self._base_url()}/todo/lists/{list_id}/tasks?$top=100&$expand=checklistItems"
         data = self._graph_get(url)
-        tasks = data.get('value', [])
-        if due_before:
-            cutoff = datetime.fromisoformat(due_before).astimezone(timezone.utc)
-            tasks = [t for t in tasks if self._task_due(t) and self._task_due(t) <= cutoff]
+        tasks = self._format_tasks(data.get('value', []))
         if due_after:
-            floor = datetime.fromisoformat(due_after).astimezone(timezone.utc)
-            tasks = [t for t in tasks if self._task_due(t) and self._task_due(t) >= floor]
+            tasks = [t for t in tasks if t.get('due', '') >= due_after]
         return tasks
 
-    def todo_list_all_tasks(self, due_before=None, due_after=None):
-        """List all tasks across all lists."""
-        lists = self.todo_list_lists()
+    def todo_get_all_tasks(self, due_after=None):
+        """List all tasks across every task list, optionally filtered by due date."""
+        lists_data = self._graph_get(f"{self._base_url()}/todo/lists")
         all_tasks = []
-        for lst in lists:
-            tasks = self.todo_list_tasks(lst['id'], due_before=due_before, due_after=due_after)
-            for t in tasks:
-                t['_list_id'] = lst['id']
-                t['_list_name'] = lst.get('displayName', '')
+        for lst in lists_data.get('value', []):
+            list_id = lst['id']
+            list_name = lst.get('displayName', '')
+            tasks = self.todo_list_tasks(list_id, due_after=due_after)
+            for task in tasks:
+                task['list_name'] = list_name
+                task['list_id'] = list_id
             all_tasks.extend(tasks)
         return all_tasks
 
     @staticmethod
-    def _task_due(task):
-        """Parse due datetime from a task dict, returns datetime or None."""
-        due = task.get('dueDateTime')
-        if not due:
-            return None
-        try:
-            dt = datetime.fromisoformat(due.get('dateTime', '').rstrip('Z'))
-            return dt.replace(tzinfo=timezone.utc)
-        except (ValueError, AttributeError):
-            return None
+    def _format_tasks(tasks):
+        """Normalise raw Graph API task objects into a clean dict structure."""
+        result = []
+        for t in tasks:
+            due = t.get('dueDateTime') or {}
+            reminder = t.get('reminderDateTime') or {}
+            result.append({
+                'id': t.get('id', ''),
+                'title': t.get('title', '(no title)'),
+                'status': t.get('status', ''),
+                'importance': t.get('importance', ''),
+                'is_done': t.get('status', '') == 'completed',
+                'due': due.get('dateTime', '') if due else '',
+                'reminder': reminder.get('dateTime', '') if reminder else '',
+                'note': (t.get('body') or {}).get('content', ''),
+                'steps': [
+                    {
+                        'id': s.get('id', ''),
+                        'title': s.get('displayName', ''),
+                        'is_done': s.get('isChecked', False),
+                    }
+                    for s in (t.get('checklistItems') or [])
+                ],
+            })
+        return result
 
-    def todo_create_task(self, list_id, title, note=None, due_date=None, reminder_datetime=None):
-        """Create a task in a list."""
-        url = f"{GRAPH_BASE}/users/{self.user}/todo/lists/{list_id}/tasks"
-        payload = {"title": title}
+    def todo_create_task(self, list_id, title, note=None, due_date=None,
+                          reminder_datetime=None):
+        """
+        Create a new task in a task list.
+        Args:
+            list_id:           ID of the target task list.
+            title:             Task title.
+            note:              Optional task note/description.
+            due_date:          Optional due date (ISO 8601, e.g. 2026-04-15T00:00:00).
+            reminder_datetime: Optional reminder datetime (ISO 8601).
+        """
+        task_data = {'title': title}
         if note:
-            payload["body"] = {"content": note, "contentType": "text"}
+            task_data['body'] = {'content': note, 'contentType': 'text'}
         if due_date:
-            payload["dueDateTime"] = {"dateTime": f"{due_date}T00:00:00", "timeZone": "UTC"}
+            task_data['dueDateTime'] = {'dateTime': due_date, 'timeZone': 'UTC'}
         if reminder_datetime:
-            payload["reminderDateTime"] = {"dateTime": reminder_datetime, "timeZone": "UTC"}
-        return self._graph_post(url, json_data=payload)
+            task_data['reminderDateTime'] = {'dateTime': reminder_datetime, 'timeZone': 'UTC'}
+            task_data['isReminderOn'] = True
+        url = f"{self._base_url()}/todo/lists/{list_id}/tasks"
+        result = self._graph_post(url, task_data)
+        return f"Task '{title}' created (ID: {result.get('id', '')})"
 
-    def todo_update_task(self, list_id, task_id, title=None, note=None, due_date=None, reminder_datetime=None):
-        """Update a task's fields."""
-        url = f"{GRAPH_BASE}/users/{self.user}/todo/lists/{list_id}/tasks/{task_id}"
-        payload = {}
-        if title is not None:
-            payload["title"] = title
+    def todo_update_task(self, list_id, task_id, title=None, note=None,
+                          due_date=None, reminder_datetime=None):
+        """Update one or more fields of an existing task."""
+        task_data = {}
+        if title:
+            task_data['title'] = title
         if note is not None:
-            payload["body"] = {"content": note, "contentType": "text"}
-        if due_date is not None:
-            payload["dueDateTime"] = {"dateTime": f"{due_date}T00:00:00", "timeZone": "UTC"}
-        if reminder_datetime is not None:
-            payload["reminderDateTime"] = {"dateTime": reminder_datetime, "timeZone": "UTC"}
-        return self._graph_patch(url, payload)
+            task_data['body'] = {'content': note, 'contentType': 'text'}
+        if due_date:
+            task_data['dueDateTime'] = {'dateTime': due_date, 'timeZone': 'UTC'}
+        if reminder_datetime:
+            task_data['reminderDateTime'] = {'dateTime': reminder_datetime, 'timeZone': 'UTC'}
+            task_data['isReminderOn'] = True
+        if not task_data:
+            return "No fields to update – specify at least one option."
+        url = f"{self._base_url()}/todo/lists/{list_id}/tasks/{task_id}"
+        self._graph_patch(url, task_data)
+        return f"Task {task_id} updated"
 
     def todo_complete_task(self, list_id, task_id):
         """Mark a task as completed."""
-        url = f"{GRAPH_BASE}/users/{self.user}/todo/lists/{list_id}/tasks/{task_id}"
-        return self._graph_patch(url, {"status": "completed"})
+        url = f"{self._base_url()}/todo/lists/{list_id}/tasks/{task_id}"
+        self._graph_patch(url, {'status': 'completed'})
+        return f"Task {task_id} marked as completed"
 
-    def todo_delete_task(self, list_id, task_id):
-        """Delete a task by ID."""
-        url = f"{GRAPH_BASE}/users/{self.user}/todo/lists/{list_id}/tasks/{task_id}"
-        self._graph_delete(url)
-        return f"Task {task_id} deleted"
-
-    def todo_add_step(self, list_id, task_id, title):
-        """Add a checklist step to a task."""
-        url = f"{GRAPH_BASE}/users/{self.user}/todo/lists/{list_id}/tasks/{task_id}/checklistItems"
-        return self._graph_post(url, json_data={"displayName": title})
+    def todo_add_step(self, list_id, task_id, step_title):
+        """Add a checklist step (subtask) to a task."""
+        url = f"{self._base_url()}/todo/lists/{list_id}/tasks/{task_id}/checklistItems"
+        result = self._graph_post(url, {'displayName': step_title, 'isChecked': False})
+        return f"Step '{step_title}' added (ID: {result.get('id', '')})"
 
     def todo_complete_step(self, list_id, task_id, step_id):
-        """Mark a checklist step as completed."""
-        url = f"{GRAPH_BASE}/users/{self.user}/todo/lists/{list_id}/tasks/{task_id}/checklistItems/{step_id}"
-        return self._graph_patch(url, {"isChecked": True})
-
-    def todo_assign_task(self, list_id, task_id, assignee_email):
-        """
-        Note: MS To Do API has limited assignment support; this stores the
-        assignee email in the task body as a workaround.
-        """
-        url = f"{GRAPH_BASE}/users/{self.user}/todo/lists/{list_id}/tasks/{task_id}"
-        task = self._graph_get(url)
-        existing_body = task.get('body', {}).get('content', '')
-        new_body = f"Assigned to: {assignee_email}\n{existing_body}"
-        return self._graph_patch(url, {"body": {"content": new_body, "contentType": "text"}})
-
-    def todo_move_task(self, source_list_id, task_id, target_list_id):
-        """Move a task from one list to another by recreating it in the target."""
-        src_url = f"{GRAPH_BASE}/users/{self.user}/todo/lists/{source_list_id}/tasks/{task_id}"
-        task = self._graph_get(src_url)
-        payload = {k: task[k] for k in ('title', 'body', 'dueDateTime', 'reminderDateTime', 'status')
-                   if k in task}
-        created = self.todo_create_task(
-            target_list_id,
-            payload.get('title', ''),
-            note=payload.get('body', {}).get('content'),
-            due_date=payload.get('dueDateTime', {}).get('dateTime', '').split('T')[0] if payload.get('dueDateTime', {}).get('dateTime') else None,
+        """Mark an individual checklist step as completed."""
+        url = (
+            f"{self._base_url()}/todo/lists/{list_id}"
+            f"/tasks/{task_id}/checklistItems/{step_id}"
         )
-        self._graph_delete(src_url)
-        return created
+        self._graph_patch(url, {'isChecked': True})
+        return f"Step {step_id} marked as completed"
+
+    def todo_move_task(self, from_list_id, task_id, to_list_id):
+        """
+        Move a task from one list to another.
+        The Graph API has no native 'move' endpoint; this copies the task
+        (including checklist steps and status) then deletes the original.
+        """
+        # Fetch original task with its checklist items
+        src_url = (
+            f"{self._base_url()}/todo/lists/{from_list_id}"
+            f"/tasks/{task_id}?$expand=checklistItems"
+        )
+        task = self._graph_get(src_url)
+
+        # Build new task payload
+        task_data = {'title': task.get('title', '')}
+        if task.get('body'):
+            task_data['body'] = task['body']
+        if task.get('dueDateTime'):
+            task_data['dueDateTime'] = task['dueDateTime']
+        if task.get('reminderDateTime'):
+            task_data['reminderDateTime'] = task['reminderDateTime']
+            task_data['isReminderOn'] = task.get('isReminderOn', False)
+        if task.get('status') == 'completed':
+            task_data['status'] = 'completed'
+
+        dst_url = f"{self._base_url()}/todo/lists/{to_list_id}/tasks"
+        new_task = self._graph_post(dst_url, task_data)
+        new_task_id = new_task.get('id', '')
+
+        # Copy checklist steps to the new task
+        for item in (task.get('checklistItems') or []):
+            step_url = (
+                f"{self._base_url()}/todo/lists/{to_list_id}"
+                f"/tasks/{new_task_id}/checklistItems"
+            )
+            self._graph_post(step_url, {
+                'displayName': item.get('displayName', ''),
+                'isChecked': item.get('isChecked', False),
+            })
+
+        # Delete original task
+        self._graph_delete(
+            f"{self._base_url()}/todo/lists/{from_list_id}/tasks/{task_id}"
+        )
+        return (
+            f"Task moved from list {from_list_id} to {to_list_id} "
+            f"(new ID: {new_task_id})"
+        )

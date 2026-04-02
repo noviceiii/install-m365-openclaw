@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='m365_openclaw',
-    version='0.2.0',
+    version='0.3.0',
     description='Microsoft m365 Skill for OpenClaw agents',
     packages=find_packages(where='src'),
     package_dir={'': 'src'},

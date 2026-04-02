@@ -2,6 +2,8 @@
 
 OpenClaw skill for unattended Microsoft 365 access via Graph API.
 
+**Version:** 0.3.0 (RBAC for Applications – Microsoft Recommended)
+
 ## Executable
 m365
 
@@ -25,7 +27,7 @@ Required environment variables:
 
 **Application permissions** (unattended/daemon access):
 `Mail.ReadWrite.All`, `Mail.Send`, `Calendars.ReadWrite.All`,
-`Files.ReadWrite.All`, `Contacts.ReadWrite`, `Tasks.ReadWrite`
+`Files.ReadWrite.All`, `Contacts.ReadWrite`, `Tasks.ReadWrite.All`
 
 **Delegated permissions** (required for OneNote):
 `Notes.ReadWrite.All`, `offline_access`
@@ -80,8 +82,9 @@ Required environment variables:
 | todo-task-move \<src-list\> \<task-id\> \<dst-list\> | Move task | m365 todo-task-move AAMk... AAMk2... AAMk4... |
 
 ## Notes
-- Mail access requires Exchange Online Application Access Policy in addition to Mail.ReadWrite.All
-- Tasks.ReadWrite permission required for ToDo features (add to app registration)
+- Mail access requires Exchange Online RBAC for Applications (recommended) in addition to Mail.ReadWrite.All and Mail.Send
+- Legacy Application Access Policy (New-ApplicationAccessPolicy) is deprecated – use RBAC for Applications instead
+- Tasks.ReadWrite.All permission required for ToDo features (add to app registration)
 - OneNote requires delegated Notes.ReadWrite.All permission
 - Excel update uses Graph API directly; file must not be open in Office
 - Word and PowerPoint use download → edit locally → re-upload workflow

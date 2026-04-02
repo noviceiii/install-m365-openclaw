@@ -1,8 +1,8 @@
-## Step-by-Step: Exchange Online – Application Access Policy Setup
+## Step-by-Step: Exchange Online – RBAC for Applications Setup (Recommended)
 
-This guide explains how to restrict the OpenClaw M365 daemon application to specific mailboxes in Exchange Online using an **Application Access Policy**. Without this restriction, an app with `Mail.ReadWrite.All` can access every mailbox in your tenant.
+This guide explains how to configure Exchange Online so the OpenClaw M365 daemon application can access specific mailboxes via the Graph API.
 
-> **Note (as of March 2026):** Application Access Policies are a **legacy mechanism**. Microsoft has replaced them with [RBAC for Applications](https://learn.microsoft.com/en-us/exchange/permissions-exo/rbac-for-applications) and strongly recommends migrating existing policies. A migration guide is included at the end of this document.
+> **Recommended approach (v0.3.0+):** RBAC for Applications is the Microsoft-recommended method for restricting mailbox access. It replaces the legacy Application Access Policy, which is deprecated and will be removed in a future Exchange Online update.
 
 **Minimum requirements**
 - A Microsoft 365 tenant with at least **Microsoft 365 Business Basic** (or higher) license
@@ -28,93 +28,19 @@ Connect-ExchangeOnline -Device
 
 ---
 
-### 2. Create a mail-enabled Security Group (if not already present)
+### 2. RBAC for Applications (recommended)
 
-An Application Access Policy requires a **mail-enabled Security Group** whose members represent the mailboxes the app is allowed to access.
+**RBAC for Applications** is the modern, Microsoft-recommended replacement for the deprecated Application Access Policy. Use the included `setup-exchange-policy.ps1` script or follow the manual steps below.
 
-```powershell
-# Create the group (alias becomes the local part of the group's email address)
-New-DistributionGroup `
-  -Name "OpenClaw m365 Exchange Access" `
-  -Alias "openclaw-m365-exchange-access" `
-  -Type Security
-
-# Add allowed mailboxes as members
-# The group email is formed as [alias]@yourdomain.com
-Add-DistributionGroupMember `
-  -Identity "openclaw-m365-exchange-access@yourdomain.com" `
-  -Member "user@yourdomain.com"
-```
-
-Replace `yourdomain.com` and the user address with your actual values.  
-Repeat `Add-DistributionGroupMember` for every mailbox the application should be permitted to access.
-
----
-
-### 3. Create the Application Access Policy
-
-This is the core command that ties the Entra ID application to the group:
+#### Option A: Use the included PowerShell script
 
 ```powershell
-New-ApplicationAccessPolicy `
-  -AppId "<YOUR_CLIENT_ID>" `
-  -PolicyScopeGroupId "openclaw-m365-exchange-access@yourdomain.com" `
-  -AccessRight RestrictAccess `
-  -Description "OpenClaw App – access restricted to group members only"
+.\setup-exchange-policy.ps1
 ```
 
-| Parameter | Description |
-|---|---|
-| `-AppId` | The **Application (client) ID** from your Entra ID app registration |
-| `-PolicyScopeGroupId` | The primary e-mail address of the mail-enabled Security Group |
-| `-AccessRight RestrictAccess` | Allows access **only** for mailboxes that are members of the group |
-| `-Description` | Free-text label visible in the policy list |
+The script will prompt for your `CLIENT_ID`, `ENTRA_OBJECT_ID`, and the allowed user email, then configure RBAC automatically.
 
----
-
-### 4. Verify & Test
-
-```powershell
-# List all Application Access Policies in the tenant
-Get-ApplicationAccessPolicy
-
-# Test whether a specific mailbox is covered by the policy
-Test-ApplicationAccessPolicy `
-  -Identity "user@yourdomain.com" `
-  -AppId "<YOUR_CLIENT_ID>"
-```
-
-Expected output for a mailbox that **is** a group member:
-
-```
-AccessCheckResult : Granted
-```
-
-Expected output for a mailbox that is **not** a member:
-
-```
-AccessCheckResult : Denied
-```
-
-> It can take up to **30 minutes** for a newly created policy to be enforced across all Exchange Online endpoints.
-
----
-
-### 5. (Optional) Remove the policy
-
-```powershell
-# List policies to find the Identity GUID
-Get-ApplicationAccessPolicy
-
-# Remove by Identity
-Remove-ApplicationAccessPolicy -Identity "<policy-guid>"
-```
-
----
-
-### Modern alternative: RBAC for Applications (recommended)
-
-Microsoft has deprecated Application Access Policies in favour of **Role-Based Access Control (RBAC) for Applications**. If you are setting up a new environment or migrating an existing one, use the following approach instead:
+#### Option B: Manual RBAC setup
 
 ```powershell
 # Step 1 – Create a Service Principal linked to your Entra ID app registration
@@ -140,30 +66,75 @@ New-ManagementRoleAssignment `
 > Get-Group -Identity "OpenClaw m365 Exchange Access" | Select-Object DistinguishedName
 > ```
 
-**When to use which approach:**
-
-| | Application Access Policy (legacy) | RBAC for Applications (modern) |
-|---|---|---|
-| Status | Deprecated – will be removed | Recommended for new setups |
-| Scope | Mail only | Mail, Calendar, Contacts, and more |
-| Granularity | Group-level | Full management scope flexibility |
-| Migration required | Yes, eventually | No |
-
 For more information see the official Microsoft documentation:  
 https://learn.microsoft.com/en-us/exchange/permissions-exo/rbac-for-applications
 
 ---
 
+### 3. Create a mail-enabled Security Group (if not already present)
+
+RBAC for Applications uses a **mail-enabled Security Group** whose members represent the mailboxes the app is allowed to access.
+
+```powershell
+# Create the group (alias becomes the local part of the group's email address)
+New-DistributionGroup `
+  -Name "OpenClaw m365 Exchange Access" `
+  -Alias "openclaw-m365-exchange-access" `
+  -Type Security
+
+# Add allowed mailboxes as members
+Add-DistributionGroupMember `
+  -Identity "openclaw-m365-exchange-access@yourdomain.com" `
+  -Member "user@yourdomain.com"
+```
+
+Replace `yourdomain.com` and the user address with your actual values.  
+Repeat `Add-DistributionGroupMember` for every mailbox the application should be permitted to access.
+
+---
+
+### 4. Verify & Test
+
+```powershell
+# List all Management Role Assignments for the application
+Get-ManagementRoleAssignment -App "<YOUR_CLIENT_ID>"
+
+# Test mail access
+m365 mail-list
+```
+
+> It can take up to **30 minutes** for newly configured RBAC permissions to propagate across all Exchange Online endpoints.
+
+---
+
+### Deprecated: Legacy Application Access Policy
+
+> ⚠️ **The Application Access Policy (`New-ApplicationAccessPolicy`) is deprecated** as of March 2026 and will be removed in a future Exchange Online update. Microsoft strongly recommends migrating to RBAC for Applications (see above).
+
+If you are maintaining an existing environment that still uses the legacy policy, you can view and remove it with:
+
+```powershell
+# List existing Application Access Policies
+Get-ApplicationAccessPolicy
+
+# Remove by Identity
+Remove-ApplicationAccessPolicy -Identity "<policy-guid>"
+```
+
+After removal, configure RBAC for Applications as described in Section 2 above.
+
+---
+
 ### Common issues & fixes
 
-- **Policy test returns `Denied` even though the mailbox is in the group**  
-  → Wait up to 30 minutes for replication. Run `Test-ApplicationAccessPolicy` again afterwards.
+- **Mail access denied (HTTP 403)** after configuring RBAC  
+  → Wait up to 30 minutes for permission propagation. Then test with `m365 mail-list`.
 
-- **`New-ApplicationAccessPolicy` returns "group not found"**  
-  → Make sure the group was created as a **mail-enabled Security Group** (`-Type Security` in `New-DistributionGroup`). Plain distribution groups are not supported.
+- **`New-ServicePrincipal` returns "already exists"**  
+  → The service principal was already created. Proceed to Step 2 (Management Scope).
 
 - **`Connect-ExchangeOnline` fails on macOS / Linux**  
   → Use the `-Device` flag to switch to Device Code Flow (browser-independent).
 
-- **Policy does not appear in `Get-ApplicationAccessPolicy`**  
+- **Policy does not appear in `Get-ManagementRoleAssignment`**  
   → Verify you are connected to the correct tenant (`Get-OrganizationConfig | Select-Object Name`).

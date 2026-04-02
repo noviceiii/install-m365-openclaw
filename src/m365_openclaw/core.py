@@ -82,6 +82,12 @@ class M365Client:
                 scopes=['https://graph.microsoft.com/.default']
             )
 
+        # Ensure token is properly initialized for pure Graph calls (todo, contacts, etc.)
+        try:
+            _ = self._access_token()
+        except Exception:
+            pass  # Will be handled gracefully on first use
+
     # ── internal helpers ──────────────────────────────────────────────────────
 
     def _get_drive(self):
@@ -89,9 +95,41 @@ class M365Client:
         return storage.get_default_drive(request_if_none=True)
 
     def _access_token(self):
-        """Return a valid access token string from the cached token."""
-        token = self.account.connection.token_backend.token
-        return token.get('access_token', '')
+        """Return a valid access token. Robust against current O365/MSAL token backend changes."""
+        # Try 1: Standard token_backend.token
+        try:
+            token_data = self.account.connection.token_backend.token
+            if isinstance(token_data, dict):
+                return token_data.get('access_token') or token_data.get('accessToken') or ''
+        except (AttributeError, TypeError, KeyError):
+            pass
+
+        # Try 2: Direct connection.token
+        try:
+            if hasattr(self.account.connection, 'token'):
+                token_obj = self.account.connection.token
+                if isinstance(token_obj, dict):
+                    return token_obj.get('access_token') or token_obj.get('accessToken') or ''
+        except Exception:
+            pass
+
+        # Try 3: Force re-authenticate + refresh
+        try:
+            if not getattr(self.account, 'is_authenticated', False):
+                print("Refreshing Microsoft 365 token...", file=sys.stderr)
+                self.account.authenticate(scopes=['https://graph.microsoft.com/.default'])
+
+            token_data = self.account.connection.token_backend.token
+            if isinstance(token_data, dict):
+                return token_data.get('access_token') or token_data.get('accessToken') or ''
+        except Exception:
+            pass
+
+        raise RuntimeError(
+            "Could not retrieve a valid access token from the token backend.\n"
+            "Please run the following command once to refresh:\n"
+            "    m365 calendar-list"
+        )
 
     def _graph_headers(self, content_type='application/json'):
         headers = {'Authorization': f'Bearer {self._access_token()}'}

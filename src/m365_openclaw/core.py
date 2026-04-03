@@ -100,7 +100,9 @@ class M365Client:
         try:
             token_data = self.account.connection.token_backend.token
             if isinstance(token_data, dict):
-                return token_data.get('access_token') or token_data.get('accessToken') or ''
+                token = token_data.get('access_token') or token_data.get('accessToken') or ''
+                if token:
+                    return token
         except (AttributeError, TypeError, KeyError):
             pass
 
@@ -109,25 +111,28 @@ class M365Client:
             if hasattr(self.account.connection, 'token'):
                 token_obj = self.account.connection.token
                 if isinstance(token_obj, dict):
-                    return token_obj.get('access_token') or token_obj.get('accessToken') or ''
+                    token = token_obj.get('access_token') or token_obj.get('accessToken') or ''
+                    if token:
+                        return token
         except Exception:
             pass
 
-        # Try 3: Force re-authenticate + refresh
+        # Try 3: Force refresh
         try:
-            if not getattr(self.account, 'is_authenticated', False):
-                print("Refreshing Microsoft 365 token...", file=sys.stderr)
-                self.account.authenticate(scopes=['https://graph.microsoft.com/.default'])
+            print("Refreshing Microsoft 365 token...", file=sys.stderr)
+            self.account.authenticate(scopes=['https://graph.microsoft.com/.default'])
 
             token_data = self.account.connection.token_backend.token
             if isinstance(token_data, dict):
-                return token_data.get('access_token') or token_data.get('accessToken') or ''
+                token = token_data.get('access_token') or token_data.get('accessToken') or ''
+                if token:
+                    return token
         except Exception:
             pass
 
         raise RuntimeError(
-            "Could not retrieve a valid access token from the token backend.\n"
-            "Please run the following command once to refresh:\n"
+            "Could not retrieve a valid access token.\n"
+            "Please run manually once:\n"
             "    m365 calendar-list"
         )
 

@@ -82,7 +82,7 @@ class M365Client:
                 scopes=['https://graph.microsoft.com/.default']
             )
 
-        # Ensure token is properly initialized for pure Graph calls (todo, contacts, etc.)
+        # Ensure token is properly initialized for pure Graph calls (todo, contacts, excel etc.)
         try:
             _ = self._access_token()
         except Exception:

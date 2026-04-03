@@ -94,7 +94,7 @@ class M365Client:
 
     def _get_drive(self):
         storage = self.account.storage()
-        return storage.get_default_drive(request_if_none=True)
+        return storage.get_default_drive(request_drive=True)
 
     def _access_token(self):
         """Return a valid access token using MSAL client credentials flow.
@@ -175,6 +175,22 @@ class M365Client:
                     "Mail access denied (HTTP 403).\n"
                     "Make sure RBAC for Applications is configured via setup-exchange-policy.ps1\n"
                     "and admin consent is granted in Entra ID."
+                ) from exc
+        except ImportError:
+            pass
+
+    # ── Todo – error helper ───────────────────────────────────────────────────
+
+    @staticmethod
+    def _raise_if_todo_401(exc):
+        try:
+            import requests
+            if isinstance(exc, requests.exceptions.HTTPError) and exc.response.status_code == 401:
+                raise PermissionError(
+                    "Microsoft To Do access denied (HTTP 401 Unauthorized).\n"
+                    "Make sure the application permission 'Tasks.ReadWrite.All' is added\n"
+                    "in Entra ID → App registrations → API permissions, and that\n"
+                    "admin consent has been granted for your organization."
                 ) from exc
         except ImportError:
             pass
@@ -739,7 +755,11 @@ class M365Client:
 
     def todo_list_task_lists(self):
         url = f"{self._base_url()}/todo/lists"
-        data = self._graph_get(url)
+        try:
+            data = self._graph_get(url)
+        except Exception as exc:
+            self._raise_if_todo_401(exc)
+            raise
         return [
             {
                 'id': lst.get('id', ''),
@@ -752,22 +772,38 @@ class M365Client:
 
     def todo_create_task_list(self, name):
         url = f"{self._base_url()}/todo/lists"
-        result = self._graph_post(url, {'displayName': name})
+        try:
+            result = self._graph_post(url, {'displayName': name})
+        except Exception as exc:
+            self._raise_if_todo_401(exc)
+            raise
         return f"Task list '{name}' created (ID: {result.get('id', '')})"
 
     def todo_rename_task_list(self, list_id, new_name):
         url = f"{self._base_url()}/todo/lists/{list_id}"
-        self._graph_patch(url, {'displayName': new_name})
+        try:
+            self._graph_patch(url, {'displayName': new_name})
+        except Exception as exc:
+            self._raise_if_todo_401(exc)
+            raise
         return f"Task list {list_id} renamed to '{new_name}'"
 
     def todo_delete_task_list(self, list_id):
         url = f"{self._base_url()}/todo/lists/{list_id}"
-        self._graph_delete(url)
+        try:
+            self._graph_delete(url)
+        except Exception as exc:
+            self._raise_if_todo_401(exc)
+            raise
         return f"Task list {list_id} deleted"
 
     def todo_list_tasks(self, list_id, due_after=None, due_before=None):
         url = f"{self._base_url()}/todo/lists/{list_id}/tasks?$top=100&$expand=checklistItems"
-        data = self._graph_get(url)
+        try:
+            data = self._graph_get(url)
+        except Exception as exc:
+            self._raise_if_todo_401(exc)
+            raise
         tasks = self._format_tasks(data.get('value', []))
         if due_after:
             tasks = [t for t in tasks if t.get('due') and t['due'][:10] >= due_after]
@@ -776,7 +812,11 @@ class M365Client:
         return tasks
 
     def todo_get_all_tasks(self, due_after=None, due_before=None):
-        lists_data = self._graph_get(f"{self._base_url()}/todo/lists")
+        try:
+            lists_data = self._graph_get(f"{self._base_url()}/todo/lists")
+        except Exception as exc:
+            self._raise_if_todo_401(exc)
+            raise
         all_tasks = []
         for lst in lists_data.get('value', []):
             list_id = lst['id']
@@ -830,7 +870,11 @@ class M365Client:
             task_data['reminderDateTime'] = {'dateTime': reminder_datetime, 'timeZone': 'UTC'}
             task_data['isReminderOn'] = True
         url = f"{self._base_url()}/todo/lists/{list_id}/tasks"
-        result = self._graph_post(url, task_data)
+        try:
+            result = self._graph_post(url, task_data)
+        except Exception as exc:
+            self._raise_if_todo_401(exc)
+            raise
         return f"Task '{title}' created (ID: {result.get('id', '')})"
 
     def todo_update_task(self, list_id, task_id, title=None, note=None,
@@ -848,17 +892,29 @@ class M365Client:
         if not task_data:
             return "No fields to update – specify at least one option."
         url = f"{self._base_url()}/todo/lists/{list_id}/tasks/{task_id}"
-        self._graph_patch(url, task_data)
+        try:
+            self._graph_patch(url, task_data)
+        except Exception as exc:
+            self._raise_if_todo_401(exc)
+            raise
         return f"Task {task_id} updated"
 
     def todo_complete_task(self, list_id, task_id):
         url = f"{self._base_url()}/todo/lists/{list_id}/tasks/{task_id}"
-        self._graph_patch(url, {'status': 'completed'})
+        try:
+            self._graph_patch(url, {'status': 'completed'})
+        except Exception as exc:
+            self._raise_if_todo_401(exc)
+            raise
         return f"Task {task_id} marked as completed"
 
     def todo_add_step(self, list_id, task_id, step_title):
         url = f"{self._base_url()}/todo/lists/{list_id}/tasks/{task_id}/checklistItems"
-        result = self._graph_post(url, {'displayName': step_title, 'isChecked': False})
+        try:
+            result = self._graph_post(url, {'displayName': step_title, 'isChecked': False})
+        except Exception as exc:
+            self._raise_if_todo_401(exc)
+            raise
         return f"Step '{step_title}' added (ID: {result.get('id', '')})"
 
     def todo_complete_step(self, list_id, task_id, step_id):
@@ -866,7 +922,11 @@ class M365Client:
             f"{self._base_url()}/todo/lists/{list_id}"
             f"/tasks/{task_id}/checklistItems/{step_id}"
         )
-        self._graph_patch(url, {'isChecked': True})
+        try:
+            self._graph_patch(url, {'isChecked': True})
+        except Exception as exc:
+            self._raise_if_todo_401(exc)
+            raise
         return f"Step {step_id} marked as completed"
 
     def todo_move_task(self, from_list_id, task_id, to_list_id):
@@ -874,7 +934,11 @@ class M365Client:
             f"{self._base_url()}/todo/lists/{from_list_id}"
             f"/tasks/{task_id}?$expand=checklistItems"
         )
-        task = self._graph_get(src_url)
+        try:
+            task = self._graph_get(src_url)
+        except Exception as exc:
+            self._raise_if_todo_401(exc)
+            raise
 
         task_data = {'title': task.get('title', '')}
         if task.get('body'):
@@ -888,7 +952,11 @@ class M365Client:
             task_data['status'] = 'completed'
 
         dst_url = f"{self._base_url()}/todo/lists/{to_list_id}/tasks"
-        new_task = self._graph_post(dst_url, task_data)
+        try:
+            new_task = self._graph_post(dst_url, task_data)
+        except Exception as exc:
+            self._raise_if_todo_401(exc)
+            raise
         new_task_id = new_task.get('id', '')
 
         for item in (task.get('checklistItems') or []):

@@ -101,6 +101,10 @@ m365 calendar-list
   → Admin consent was not granted.  
   Go back to step 2.4 and click **Grant admin consent for [your organization]**.
 
+- **"Microsoft To Do access denied (HTTP 401 Unauthorized)"** when running `todo-*` commands  
+  → The application permission `Tasks.ReadWrite.All` is either missing or admin consent has not been granted.  
+  Go to Entra ID → App registrations → API permissions, add **Application permission** `Tasks.ReadWrite.All`, then click **Grant admin consent for [your organization]**.
+
 - **"Insufficient privileges"** when accessing mail, calendar or files  
   → Check that the **application permissions** (`Mail.ReadWrite.All`, `Mail.Send`, `Calendars.ReadWrite.All`, `Files.ReadWrite.All`, etc.) are correctly added **and** that admin consent was granted.
 

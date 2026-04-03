@@ -1,12 +1,12 @@
 """
-core.py – Microsoft 365 client for OpenClaw agents (v0.3.0).
+core.py – Microsoft 365 client for OpenClaw agents (v0.3.1).
 
 Supports: Mail, Calendar, Contacts, OneDrive, OneNote, Excel, Word, PowerPoint,
           Microsoft ToDo tasks.
 Uses client-credentials (daemon/application) flow via the O365 library + MSAL.
 
 Important: When using application permissions (client_credentials flow), all
-Graph API calls must target a specific user.  Set M365_USER_EMAIL in .env so
+Graph API calls must target a specific user. Set M365_USER_EMAIL in .env so
 that main_resource resolves /me/ to /users/<email>/ automatically.
 """
 
@@ -52,8 +52,6 @@ class M365Client:
         self.client_id = os.getenv("CLIENT_ID")
         self.client_secret = os.getenv("CLIENT_SECRET")
         self.token_cache_path = os.getenv("TOKEN_CACHE_PATH")
-        # main_resource ensures /me/ resolves to the licensed user under
-        # client-credentials (application permissions) flow.
         self.user = os.getenv("M365_USER_EMAIL") or "me"
 
         if not all([self.tenant_id, self.client_id, self.client_secret]):
@@ -82,7 +80,7 @@ class M365Client:
                 scopes=['https://graph.microsoft.com/.default']
             )
 
-        # Ensure token is properly initialized for pure Graph calls (todo, contacts, excel etc.)
+        # Ensure token is properly initialized and persisted for pure Graph calls
         try:
             _ = self._access_token()
         except Exception:
@@ -95,7 +93,7 @@ class M365Client:
         return storage.get_default_drive(request_if_none=True)
 
     def _access_token(self):
-        """Return a valid access token. Robust against current O365/MSAL token backend changes."""
+        """Return a valid access token with explicit refresh and persist."""
         # Try 1: Standard token_backend.token
         try:
             token_data = self.account.connection.token_backend.token
@@ -117,21 +115,26 @@ class M365Client:
         except Exception:
             pass
 
-        # Try 3: Force refresh
+        # Try 3: Force refresh + explicit save
         try:
             print("Refreshing Microsoft 365 token...", file=sys.stderr)
             self.account.authenticate(scopes=['https://graph.microsoft.com/.default'])
 
+            # Force save to token backend (important for persistence)
+            if hasattr(self.account.connection.token_backend, 'save_token'):
+                self.account.connection.token_backend.save_token()
+
+            # Extract token after refresh
             token_data = self.account.connection.token_backend.token
             if isinstance(token_data, dict):
                 token = token_data.get('access_token') or token_data.get('accessToken') or ''
                 if token:
                     return token
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Token refresh failed: {e}", file=sys.stderr)
 
         raise RuntimeError(
-            "Could not retrieve a valid access token.\n"
+            "Could not retrieve a valid access token after refresh.\n"
             "Please run manually once:\n"
             "    m365 calendar-list"
         )
@@ -214,8 +217,7 @@ class M365Client:
                             "\n"
                             "     Reference: https://learn.microsoft.com/en-us/exchange/permissions-exo/rbac-for-applications\n"
                             "\n"
-                            "  Note: The legacy Application Access Policy (New-ApplicationAccessPolicy)\n"
-                            "        is deprecated. Use RBAC for Applications instead."
+                            "  Note: The legacy Application Access Policy is deprecated."
                         ) from exc
         except ImportError:
             pass
@@ -225,21 +227,6 @@ class M365Client:
     def send_mail(self, to_address, subject, body, cc=None, bcc=None,
                   sensitivity='Normal', importance='Normal', attachments=None,
                   request_delivery_receipt=False, request_read_receipt=False):
-        """
-        Send an email via the Graph API with full feature support.
-
-        Args:
-            to_address: Recipient address string or list of strings.
-            subject:    Email subject.
-            body:       Email body (plain text or HTML).
-            cc:         CC address string or list of strings (optional).
-            bcc:        BCC address string or list of strings (optional).
-            sensitivity: Normal | Personal | Private | Confidential (default: Normal).
-            importance:  High | Normal | Low (default: Normal).
-            attachments: Local file path string or list of paths (optional).
-            request_delivery_receipt: Request delivery receipt (default: False).
-            request_read_receipt:     Request read receipt (default: False).
-        """
         def _recipients(addrs):
             if not addrs:
                 return []
@@ -261,7 +248,6 @@ class M365Client:
         if bcc:
             message['bccRecipients'] = _recipients(bcc)
 
-        # Add file attachments encoded as base64
         if attachments:
             att_list = attachments if isinstance(attachments, list) else [attachments]
             graph_atts = []
@@ -286,7 +272,6 @@ class M365Client:
         return f"Email sent to {', '.join(recipients)}"
 
     def list_mail(self, limit=20):
-        """Return recent messages from the inbox, including message IDs for follow-up."""
         try:
             messages = self.account.mailbox().inbox_folder().get_messages(limit=limit)
         except Exception as exc:
@@ -304,17 +289,11 @@ class M365Client:
         return result
 
     def search_mail(self, subject_query, limit=10):
-        """
-        Search inbox messages by subject keyword.
-        Returns a list of matching messages including their IDs, body content,
-        and sender details – ready for follow-up actions (reply, forward, etc.).
-        """
         url = (
             f"{self._base_url()}/mailFolders/inbox/messages"
             f"?$top={limit}"
             f"&$select=id,subject,from,receivedDateTime,isRead,body"
         )
-        # OData 'contains' filter on subject
         url += f"&$filter=contains(subject,'{subject_query}')"
         try:
             data = self._graph_get(url)
@@ -335,7 +314,6 @@ class M365Client:
         return result
 
     def get_mail_headers(self, message_id):
-        """Return headers and metadata for a specific message by ID."""
         url = (
             f"{self._base_url()}/messages/{message_id}"
             f"?$select=id,subject,from,toRecipients,ccRecipients,"
@@ -362,7 +340,6 @@ class M365Client:
         }
 
     def reply_mail(self, message_id, body):
-        """Reply to the sender of a message (reply to sender only)."""
         url = f"{self._base_url()}/messages/{message_id}/reply"
         try:
             self._graph_post(url, {'message': {}, 'comment': body})
@@ -372,7 +349,6 @@ class M365Client:
         return f"Reply sent for message {message_id}"
 
     def reply_all_mail(self, message_id, body):
-        """Reply to all recipients of a message."""
         url = f"{self._base_url()}/messages/{message_id}/replyAll"
         try:
             self._graph_post(url, {'message': {}, 'comment': body})
@@ -382,7 +358,6 @@ class M365Client:
         return f"Reply-All sent for message {message_id}"
 
     def forward_mail(self, message_id, to_address, body=""):
-        """Forward a message to one or more new recipients."""
         if isinstance(to_address, str):
             to_address = [to_address]
         url = f"{self._base_url()}/messages/{message_id}/forward"
@@ -399,7 +374,6 @@ class M365Client:
         return f"Message forwarded to {', '.join(to_address)}"
 
     def delete_mail(self, message_id):
-        """Permanently delete a message by ID."""
         url = f"{self._base_url()}/messages/{message_id}"
         try:
             self._graph_delete(url)
@@ -409,11 +383,6 @@ class M365Client:
         return f"Message {message_id} deleted"
 
     def move_mail(self, message_id, destination_folder):
-        """
-        Move a message to another mail folder.
-        Use well-known names: inbox, sent, drafts, deleted, archive, junk.
-        Or provide a folder ID directly.
-        """
         well_known = {
             'inbox': 'inbox',
             'sent': 'sentitems',
@@ -435,7 +404,6 @@ class M365Client:
     # ── Calendar ──────────────────────────────────────────────────────────────
 
     def get_calendar_events(self, days=7):
-        """Return upcoming calendar events within the next *days* days."""
         schedule = self.account.schedule()
         calendar = schedule.get_default_calendar()
         events = calendar.get_events(include_recurring=False, limit=100)
@@ -456,23 +424,8 @@ class M365Client:
         return upcoming
 
     def create_calendar_event(self, subject, start_iso, end_iso, body="", location="",
-                               required_attendees=None, optional_attendees=None,
-                               is_private=False, reminder_minutes=None, attachment=None):
-        """
-        Create a calendar event via Graph API with extended options.
-
-        Args:
-            subject:             Event title.
-            start_iso:           Start time in ISO 8601 format (e.g. 2026-04-15T10:00:00).
-            end_iso:             End time in ISO 8601 format.
-            body:                Event description/body text (optional).
-            location:            Location or address (optional).
-            required_attendees:  Email string or list of emails for required attendees.
-            optional_attendees:  Email string or list of emails for optional attendees.
-            is_private:          Mark event as private (default: False).
-            reminder_minutes:    Minutes before event to trigger a reminder (optional).
-            attachment:          Local file path to attach to the event (optional).
-        """
+                              required_attendees=None, optional_attendees=None,
+                              is_private=False, reminder_minutes=None, attachment=None):
         event_data = {
             'subject': subject,
             'body': {'contentType': 'HTML', 'content': body},
@@ -483,7 +436,6 @@ class M365Client:
         if location:
             event_data['location'] = {'displayName': location}
 
-        # Build attendees list
         attendees = []
         if required_attendees:
             if isinstance(required_attendees, str):
@@ -498,12 +450,10 @@ class M365Client:
         if attendees:
             event_data['attendees'] = attendees
 
-        # Reminder
         if reminder_minutes is not None:
             event_data['isReminderOn'] = True
             event_data['reminderMinutesBeforeStart'] = int(reminder_minutes)
 
-        # File attachment (base64)
         if attachment:
             with open(attachment, 'rb') as fh:
                 content_b64 = base64.b64encode(fh.read()).decode()
@@ -521,10 +471,6 @@ class M365Client:
     # ── Contacts ──────────────────────────────────────────────────────────────
 
     def list_contacts(self, limit=100):
-        """
-        List contacts. Returns columns: ID, first name, last name, work email,
-        personal email, work phone, home phone, mobile phone.
-        """
         url = (
             f"{self._base_url()}/contacts"
             f"?$top={limit}"
@@ -535,7 +481,6 @@ class M365Client:
         result = []
         for c in data.get('value', []):
             emails = c.get('emailAddresses', [])
-            # First email is treated as work, second as home if no type label
             work_email = ''
             home_email = ''
             for e in emails:
@@ -563,10 +508,6 @@ class M365Client:
         return result
 
     def get_contact(self, name):
-        """
-        Get all available fields for the first contact whose display name contains *name*.
-        Returns None if no match is found.
-        """
         url = (
             f"{self._base_url()}/contacts"
             f"?$top=5"
@@ -607,17 +548,6 @@ class M365Client:
                         birthday=None, anniversary=None,
                         website=None, work_website=None,
                         spouse=None, notes=None):
-        """
-        Create a new contact with extended optional fields.
-
-        Backward compatible: positional 'email' and 'phone' still work as work
-        email and work phone respectively.  All additional fields are optional flags.
-
-        Note: Fields such as hobbies, zodiac sign, and children count are not
-        supported by the Graph API contacts schema.  Include them in the *notes*
-        parameter to preserve the information.
-        """
-        # Build email address list
         email_list = []
         resolved_work_email = work_email or email
         if resolved_work_email:
@@ -631,7 +561,6 @@ class M365Client:
             'emailAddresses': email_list,
         }
 
-        # Business phones
         resolved_work_phone = work_phone or phone
         if resolved_work_phone:
             contact_data['businessPhones'] = [resolved_work_phone.strip()]
@@ -640,7 +569,6 @@ class M365Client:
         if mobile_phone:
             contact_data['mobilePhone'] = mobile_phone.strip()
 
-        # Addresses
         if any([work_street, work_city, work_state, work_zip, work_country]):
             contact_data['businessAddress'] = {
                 'street': work_street or '',
@@ -658,9 +586,8 @@ class M365Client:
                 'countryOrRegion': home_country or '',
             }
 
-        # Personal details
         if birthday:
-            contact_data['birthday'] = birthday        # ISO 8601, e.g. 1990-05-15T00:00:00Z
+            contact_data['birthday'] = birthday
         if anniversary:
             contact_data['anniversary'] = anniversary
         if spouse:
@@ -668,7 +595,6 @@ class M365Client:
         if notes:
             contact_data['personalNotes'] = notes
 
-        # Websites
         websites = []
         if website:
             websites.append({'type': 'home', 'address': website})
@@ -683,7 +609,6 @@ class M365Client:
         return f"Contact '{given_name} {surname}' created (ID: {contact_id})"
 
     def set_contact_photo(self, contact_id, photo_path):
-        """Upload a photo for a contact (JPEG recommended, max 4 MB)."""
         with open(photo_path, 'rb') as fh:
             photo_bytes = fh.read()
         url = f"{self._base_url()}/contacts/{contact_id}/photo/$value"
@@ -691,13 +616,11 @@ class M365Client:
         return f"Photo set for contact {contact_id}"
 
     def delete_contact_photo(self, contact_id):
-        """Delete the profile photo for a contact."""
         url = f"{self._base_url()}/contacts/{contact_id}/photo/$value"
         self._graph_delete(url)
         return f"Photo deleted for contact {contact_id}"
 
     def get_contact_photo(self, contact_id, save_path):
-        """Download the profile photo of a contact to a local file."""
         import requests as req
         url = f"{self._base_url()}/contacts/{contact_id}/photo/$value"
         resp = req.get(url, headers=self._graph_headers(content_type=None), timeout=30)
@@ -707,7 +630,6 @@ class M365Client:
         return f"Photo saved to {save_path}"
 
     def update_contact_photo(self, contact_id, photo_path):
-        """Upload a photo for a contact."""
         url = f"{GRAPH_BASE}/users/{self.user}/contacts/{contact_id}/photo/$value"
         ext = Path(photo_path).suffix.lower()
         content_type = "image/jpeg" if ext in ('.jpg', '.jpeg') else "image/png"
@@ -717,7 +639,6 @@ class M365Client:
         return f"Photo updated for contact {contact_id}"
 
     def delete_contact_photo(self, contact_id):
-        """Delete a contact's photo."""
         url = f"{GRAPH_BASE}/users/{self.user}/contacts/{contact_id}/photo/$value"
         self._graph_delete(url)
         return f"Photo deleted for contact {contact_id}"
@@ -725,7 +646,6 @@ class M365Client:
     # ── OneDrive ─────────────────────────────────────────────────────────────
 
     def onedrive_list(self, folder_path="/"):
-        """List files and folders in OneDrive."""
         drive = self._get_drive()
         if folder_path in ("/", ""):
             folder = drive.get_root_folder()
@@ -742,7 +662,6 @@ class M365Client:
         return result
 
     def onedrive_upload(self, local_path, remote_path):
-        """Upload a local file to OneDrive, overwriting if it already exists."""
         drive = self._get_drive()
         remote = Path(remote_path)
         parent_str = str(remote.parent)
@@ -754,7 +673,6 @@ class M365Client:
         return f"Uploaded to {remote_path}" if uploaded else "Upload failed"
 
     def onedrive_download(self, remote_path, local_path):
-        """Download a file from OneDrive to a local path."""
         drive = self._get_drive()
         item = drive.get_item_by_path(remote_path)
         local = Path(local_path)
@@ -764,10 +682,6 @@ class M365Client:
     # ── OneNote ───────────────────────────────────────────────────────────────
 
     def onenote_create_page(self, notebook_name, section_name, title, html_content):
-        """
-        Create a OneNote page in the given notebook and section.
-        Requires the delegated permission Notes.ReadWrite.All.
-        """
         try:
             onenote = self.account.onenote()
             notebooks = list(onenote.list_notebooks())
@@ -796,10 +710,6 @@ class M365Client:
     # ── Excel ─────────────────────────────────────────────────────────────────
 
     def excel_update(self, onedrive_path, sheet_name, cell_range, values):
-        """
-        Update cells in an Excel workbook stored on OneDrive via the Graph API.
-        Values is a flat list; it is reshaped into a 2-D array matching the range.
-        """
         drive = self._get_drive()
         item = drive.get_item_by_path(onedrive_path)
         drive_id = drive.object_id
@@ -823,7 +733,6 @@ class M365Client:
     # ── Word ──────────────────────────────────────────────────────────────────
 
     def word_update(self, onedrive_path, replacements):
-        """Download a .docx, replace placeholder text, re-upload to OneDrive."""
         try:
             from docx import Document
         except ImportError:
@@ -850,7 +759,6 @@ class M365Client:
     # ── PowerPoint ────────────────────────────────────────────────────────────
 
     def ppt_update(self, onedrive_path, slide_number, replacements):
-        """Download a .pptx, replace text in slide *slide_number* (0-indexed), re-upload."""
         try:
             from pptx import Presentation
         except ImportError:
@@ -873,7 +781,6 @@ class M365Client:
     # ── Microsoft ToDo / Tasks ────────────────────────────────────────────────
 
     def todo_list_task_lists(self):
-        """List all Microsoft ToDo task lists. Returns list with id and name."""
         url = f"{self._base_url()}/todo/lists"
         data = self._graph_get(url)
         return [
@@ -887,33 +794,21 @@ class M365Client:
         ]
 
     def todo_create_task_list(self, name):
-        """Create a new Microsoft ToDo task list with the given name."""
         url = f"{self._base_url()}/todo/lists"
         result = self._graph_post(url, {'displayName': name})
         return f"Task list '{name}' created (ID: {result.get('id', '')})"
 
     def todo_rename_task_list(self, list_id, new_name):
-        """Rename an existing task list."""
         url = f"{self._base_url()}/todo/lists/{list_id}"
         self._graph_patch(url, {'displayName': new_name})
         return f"Task list {list_id} renamed to '{new_name}'"
 
     def todo_delete_task_list(self, list_id):
-        """Delete a task list and all its tasks permanently."""
         url = f"{self._base_url()}/todo/lists/{list_id}"
         self._graph_delete(url)
         return f"Task list {list_id} deleted"
 
     def todo_list_tasks(self, list_id, due_after=None, due_before=None):
-        """
-        List tasks in a specific task list.
-        Args:
-            list_id:    ID of the task list.
-            due_after:  Optional ISO 8601 date (e.g. 2026-01-01) to show only tasks
-                        due on or after that date (client-side filter).
-            due_before: Optional ISO 8601 date (e.g. 2026-01-31) to show only tasks
-                        due on or before that date (client-side filter).
-        """
         url = f"{self._base_url()}/todo/lists/{list_id}/tasks?$top=100&$expand=checklistItems"
         data = self._graph_get(url)
         tasks = self._format_tasks(data.get('value', []))
@@ -924,7 +819,6 @@ class M365Client:
         return tasks
 
     def todo_get_all_tasks(self, due_after=None, due_before=None):
-        """List all tasks across every task list, optionally filtered by due date."""
         lists_data = self._graph_get(f"{self._base_url()}/todo/lists")
         all_tasks = []
         for lst in lists_data.get('value', []):
@@ -938,14 +832,12 @@ class M365Client:
         return all_tasks
 
     def todo_get_tasks_today(self):
-        """List all tasks due today across every task list."""
         from datetime import date
         today = date.today().isoformat()
         return self.todo_get_all_tasks(due_after=today, due_before=today)
 
     @staticmethod
     def _format_tasks(tasks):
-        """Normalise raw Graph API task objects into a clean dict structure."""
         result = []
         for t in tasks:
             due = t.get('dueDateTime') or {}
@@ -972,15 +864,6 @@ class M365Client:
 
     def todo_create_task(self, list_id, title, note=None, due_date=None,
                           reminder_datetime=None):
-        """
-        Create a new task in a task list.
-        Args:
-            list_id:           ID of the target task list.
-            title:             Task title.
-            note:              Optional task note/description.
-            due_date:          Optional due date (ISO 8601, e.g. 2026-04-15T00:00:00).
-            reminder_datetime: Optional reminder datetime (ISO 8601).
-        """
         task_data = {'title': title}
         if note:
             task_data['body'] = {'content': note, 'contentType': 'text'}
@@ -995,7 +878,6 @@ class M365Client:
 
     def todo_update_task(self, list_id, task_id, title=None, note=None,
                           due_date=None, reminder_datetime=None):
-        """Update one or more fields of an existing task."""
         task_data = {}
         if title:
             task_data['title'] = title
@@ -1013,19 +895,16 @@ class M365Client:
         return f"Task {task_id} updated"
 
     def todo_complete_task(self, list_id, task_id):
-        """Mark a task as completed."""
         url = f"{self._base_url()}/todo/lists/{list_id}/tasks/{task_id}"
         self._graph_patch(url, {'status': 'completed'})
         return f"Task {task_id} marked as completed"
 
     def todo_add_step(self, list_id, task_id, step_title):
-        """Add a checklist step (subtask) to a task."""
         url = f"{self._base_url()}/todo/lists/{list_id}/tasks/{task_id}/checklistItems"
         result = self._graph_post(url, {'displayName': step_title, 'isChecked': False})
         return f"Step '{step_title}' added (ID: {result.get('id', '')})"
 
     def todo_complete_step(self, list_id, task_id, step_id):
-        """Mark an individual checklist step as completed."""
         url = (
             f"{self._base_url()}/todo/lists/{list_id}"
             f"/tasks/{task_id}/checklistItems/{step_id}"
@@ -1034,19 +913,12 @@ class M365Client:
         return f"Step {step_id} marked as completed"
 
     def todo_move_task(self, from_list_id, task_id, to_list_id):
-        """
-        Move a task from one list to another.
-        The Graph API has no native 'move' endpoint; this copies the task
-        (including checklist steps and status) then deletes the original.
-        """
-        # Fetch original task with its checklist items
         src_url = (
             f"{self._base_url()}/todo/lists/{from_list_id}"
             f"/tasks/{task_id}?$expand=checklistItems"
         )
         task = self._graph_get(src_url)
 
-        # Build new task payload
         task_data = {'title': task.get('title', '')}
         if task.get('body'):
             task_data['body'] = task['body']
@@ -1062,7 +934,6 @@ class M365Client:
         new_task = self._graph_post(dst_url, task_data)
         new_task_id = new_task.get('id', '')
 
-        # Copy checklist steps to the new task
         for item in (task.get('checklistItems') or []):
             step_url = (
                 f"{self._base_url()}/todo/lists/{to_list_id}"
@@ -1073,7 +944,6 @@ class M365Client:
                 'isChecked': item.get('isChecked', False),
             })
 
-        # Delete original task
         self._graph_delete(
             f"{self._base_url()}/todo/lists/{from_list_id}/tasks/{task_id}"
         )
@@ -1081,3 +951,9 @@ class M365Client:
             f"Task moved from list {from_list_id} to {to_list_id} "
             f"(new ID: {new_task_id})"
         )
+
+
+if __name__ == "__main__":
+    # For direct testing
+    client = M365Client()
+    print("M365Client initialized successfully")

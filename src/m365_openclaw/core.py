@@ -84,7 +84,7 @@ class M365Client:
         try:
             _ = self._access_token()
         except Exception:
-            pass  # Will be handled gracefully on first use
+            pass
 
     # ── internal helpers ──────────────────────────────────────────────────────
 
@@ -93,18 +93,8 @@ class M365Client:
         return storage.get_default_drive(request_if_none=True)
 
     def _access_token(self):
-        """Return a valid access token with explicit refresh and persist."""
-        # Try 1: Standard token_backend.token
-        try:
-            token_data = self.account.connection.token_backend.token
-            if isinstance(token_data, dict):
-                token = token_data.get('access_token') or token_data.get('accessToken') or ''
-                if token:
-                    return token
-        except (AttributeError, TypeError, KeyError):
-            pass
-
-        # Try 2: Direct connection.token
+        """Return a valid access token. Most reliable approach for O365 credentials flow."""
+        # Primary: direct connection.token (most reliable in current O365)
         try:
             if hasattr(self.account.connection, 'token'):
                 token_obj = self.account.connection.token
@@ -115,16 +105,33 @@ class M365Client:
         except Exception:
             pass
 
-        # Try 3: Force refresh + explicit save
+        # Fallback: token_backend.token
+        try:
+            token_data = self.account.connection.token_backend.token
+            if isinstance(token_data, dict):
+                token = token_data.get('access_token') or token_data.get('accessToken') or ''
+                if token:
+                    return token
+        except Exception:
+            pass
+
+        # Force refresh + explicit save
         try:
             print("Refreshing Microsoft 365 token...", file=sys.stderr)
             self.account.authenticate(scopes=['https://graph.microsoft.com/.default'])
 
-            # Force save to token backend (important for persistence)
+            # Force save to token backend
             if hasattr(self.account.connection.token_backend, 'save_token'):
                 self.account.connection.token_backend.save_token()
 
-            # Extract token after refresh
+            # Try again after refresh
+            if hasattr(self.account.connection, 'token'):
+                token_obj = self.account.connection.token
+                if isinstance(token_obj, dict):
+                    token = token_obj.get('access_token') or token_obj.get('accessToken') or ''
+                    if token:
+                        return token
+
             token_data = self.account.connection.token_backend.token
             if isinstance(token_data, dict):
                 token = token_data.get('access_token') or token_data.get('accessToken') or ''
@@ -146,79 +153,50 @@ class M365Client:
         return headers
 
     def _graph_get(self, url, params=None):
-        """HTTP GET against the Microsoft Graph API."""
-        import requests as req
-        resp = req.get(url, headers=self._graph_headers(), params=params, timeout=30)
+        resp = requests.get(url, headers=self._graph_headers(), params=params, timeout=30)
         resp.raise_for_status()
         return resp.json() if resp.content else {}
 
     def _graph_post(self, url, data=None, content_type='application/json', raw_data=None):
-        """HTTP POST to the Microsoft Graph API."""
-        import requests as req
         headers = self._graph_headers(content_type=content_type)
         if raw_data is not None:
-            resp = req.post(url, headers=headers, data=raw_data, timeout=30)
+            resp = requests.post(url, headers=headers, data=raw_data, timeout=30)
         else:
-            resp = req.post(url, headers=headers, json=data, timeout=30)
+            resp = requests.post(url, headers=headers, json=data, timeout=30)
         resp.raise_for_status()
         return resp.json() if resp.content else {}
 
     def _graph_patch(self, url, data):
-        """HTTP PATCH to the Microsoft Graph API with JSON body."""
-        import requests as req
-        resp = req.patch(url, headers=self._graph_headers(), json=data, timeout=30)
+        resp = requests.patch(url, headers=self._graph_headers(), json=data, timeout=30)
         resp.raise_for_status()
         return resp.json() if resp.content else {}
 
     def _graph_delete(self, url):
-        """HTTP DELETE to the Microsoft Graph API."""
-        import requests as req
-        resp = req.delete(url, headers=self._graph_headers(content_type=None), timeout=30)
+        resp = requests.delete(url, headers=self._graph_headers(content_type=None), timeout=30)
         resp.raise_for_status()
         return {}
 
     def _graph_put(self, url, data, content_type='application/octet-stream'):
-        """HTTP PUT to the Microsoft Graph API (used for binary uploads)."""
-        import requests as req
-        resp = req.put(url, headers=self._graph_headers(content_type=content_type),
-                       data=data, timeout=60)
+        headers = self._graph_headers(content_type=content_type)
+        resp = requests.put(url, headers=headers, data=data, timeout=60)
         resp.raise_for_status()
         return resp.json() if resp.content else {}
 
     def _base_url(self):
-        """Return the per-user Graph API base URL."""
         return f"https://graph.microsoft.com/v1.0/users/{self.user}"
 
     # ── Mail – error helper ───────────────────────────────────────────────────
 
     @staticmethod
     def _raise_if_mail_403(exc):
-        """Re-raise with actionable guidance when a 403 occurs on a mail endpoint."""
         try:
             import requests
-            if isinstance(exc, requests.exceptions.HTTPError):
-                resp = getattr(exc, 'response', None)
-                if resp is not None and resp.status_code == 403:
-                    url = getattr(resp, 'url', '') or ''
-                    if 'mailFolders' in url or '/messages' in url or 'sendMail' in url:
-                        raise PermissionError(
-                            "Mail access denied (HTTP 403 Forbidden).\n"
-                            "\n"
-                            "Common causes and fixes:\n"
-                            "  1. The 'Mail.ReadWrite.All' and 'Mail.Send' application permissions\n"
-                            "     are not admin-consented in your Entra ID App Registration.\n"
-                            "     Go to: Entra ID → App registrations → <your app>\n"
-                            "             → API permissions → Grant admin consent\n"
-                            "\n"
-                            "  2. Exchange Online requires RBAC for Applications (recommended)\n"
-                            "     for mail access via application credentials (daemon/app flow).\n"
-                            "     Follow Microsoft-Exchange-Policy-installation.md to configure\n"
-                            "     RBAC for Applications using setup-exchange-policy.ps1.\n"
-                            "\n"
-                            "     Reference: https://learn.microsoft.com/en-us/exchange/permissions-exo/rbac-for-applications\n"
-                            "\n"
-                            "  Note: The legacy Application Access Policy is deprecated."
-                        ) from exc
+            if isinstance(exc, requests.exceptions.HTTPError) and exc.response.status_code == 403:
+                raise PermissionError(
+                    "Mail access denied (HTTP 403).\n"
+                    "Make sure RBAC for Applications is configured via setup-exchange-policy.ps1\n"
+                    "and admin consent is granted in Entra ID."
+                ) from exc
         except ImportError:
             pass
 
@@ -954,6 +932,5 @@ class M365Client:
 
 
 if __name__ == "__main__":
-    # For direct testing
     client = M365Client()
     print("M365Client initialized successfully")

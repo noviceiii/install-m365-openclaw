@@ -18,6 +18,7 @@ import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import msal
 import requests
 from dotenv import load_dotenv
 from O365 import Account
@@ -74,17 +75,20 @@ class M365Client:
             main_resource=self.user,
         )
 
+        # MSAL app used for direct Graph API calls (todo-*, etc.)
+        # Using MSAL directly avoids reading O365 internal connection state,
+        # which is unreliable and can corrupt the O365 session when retried.
+        self._msal_app = msal.ConfidentialClientApplication(
+            self.client_id,
+            authority=f"https://login.microsoftonline.com/{self.tenant_id}",
+            client_credential=self.client_secret,
+        )
+
         if not self.account.is_authenticated:
             print("Authenticating with Microsoft 365...", file=sys.stderr)
             self.account.authenticate(
                 scopes=['https://graph.microsoft.com/.default']
             )
-
-        # Ensure token is properly initialized and persisted for pure Graph calls
-        try:
-            _ = self._access_token()
-        except Exception:
-            pass
 
     # ── internal helpers ──────────────────────────────────────────────────────
 
@@ -93,57 +97,32 @@ class M365Client:
         return storage.get_default_drive(request_if_none=True)
 
     def _access_token(self):
-        """Return a valid access token. Most reliable approach for O365 credentials flow."""
-        # Primary: direct connection.token (most reliable in current O365)
-        try:
-            if hasattr(self.account.connection, 'token'):
-                token_obj = self.account.connection.token
-                if isinstance(token_obj, dict):
-                    token = token_obj.get('access_token') or token_obj.get('accessToken') or ''
-                    if token:
-                        return token
-        except Exception:
-            pass
+        """Return a valid access token using MSAL client credentials flow.
 
-        # Fallback: token_backend.token
-        try:
-            token_data = self.account.connection.token_backend.token
-            if isinstance(token_data, dict):
-                token = token_data.get('access_token') or token_data.get('accessToken') or ''
-                if token:
-                    return token
-        except Exception:
-            pass
+        Uses self._msal_app (ConfidentialClientApplication) directly instead
+        of reading from the O365 connection's internal state.  The O365
+        library's own session (account.schedule(), etc.) is kept intact
+        because we never call account.authenticate() here again.
+        """
+        scope = ["https://graph.microsoft.com/.default"]
 
-        # Force refresh + explicit save
-        try:
-            print("Refreshing Microsoft 365 token...", file=sys.stderr)
-            self.account.authenticate(scopes=['https://graph.microsoft.com/.default'])
+        # Try a silently cached token first (avoids a round-trip to MSFT)
+        result = self._msal_app.acquire_token_silent(scope, account=None)
+        if result and "access_token" in result:
+            return result["access_token"]
 
-            # Force save to token backend
-            if hasattr(self.account.connection.token_backend, 'save_token'):
-                self.account.connection.token_backend.save_token()
+        # Fetch a fresh token from Azure AD
+        print("Refreshing Microsoft 365 token...", file=sys.stderr)
+        result = self._msal_app.acquire_token_for_client(scopes=scope)
+        if result and "access_token" in result:
+            return result["access_token"]
 
-            # Try again after refresh
-            if hasattr(self.account.connection, 'token'):
-                token_obj = self.account.connection.token
-                if isinstance(token_obj, dict):
-                    token = token_obj.get('access_token') or token_obj.get('accessToken') or ''
-                    if token:
-                        return token
-
-            token_data = self.account.connection.token_backend.token
-            if isinstance(token_data, dict):
-                token = token_data.get('access_token') or token_data.get('accessToken') or ''
-                if token:
-                    return token
-        except Exception as e:
-            print(f"Token refresh failed: {e}", file=sys.stderr)
-
+        error = result.get("error", "unknown") if result else "no response"
+        desc = result.get("error_description", "") if result else ""
         raise RuntimeError(
-            "Could not retrieve a valid access token after refresh.\n"
-            "Please run manually once:\n"
-            "    m365 calendar-list"
+            f"Could not retrieve a valid access token.\n"
+            f"Azure AD error: {error} – {desc}\n"
+            "Please verify TENANT_ID, CLIENT_ID, and CLIENT_SECRET in .env"
         )
 
     def _graph_headers(self, content_type='application/json'):

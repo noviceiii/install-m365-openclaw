@@ -2,7 +2,7 @@
 
 OpenClaw skill for unattended Microsoft 365 access via Graph API.
 
-**Version:** 0.4.0 (RBAC for Applications – Microsoft Recommended)
+**Version:** 0.5.0 (Delegated Permissions – Device-Code Flow)
 
 ## Executable
 m365
@@ -10,8 +10,10 @@ m365
 ## Description
 Enables OpenClaw agents to send/read mail, manage calendar events, manage contacts,
 access OneDrive files, create OneNote pages, edit Excel/Word/PowerPoint documents,
-and manage Microsoft To Do tasks. Uses client-credentials (daemon) flow for most
-operations; OneNote requires delegated flow.
+manage Microsoft To Do tasks, create Teams chats, schedule online meetings, manage
+Bookings appointments, and list SharePoint sites. Uses delegated (device-code) flow:
+the user signs in once interactively; the app then works fully headless using cached
+refresh tokens via `GET /me/…`.
 
 ## Configuration
 Credentials stored in: ~/.openclaw/skills/m365-graph/.env
@@ -19,21 +21,39 @@ Credentials stored in: ~/.openclaw/skills/m365-graph/.env
 Required environment variables:
 - TENANT_ID
 - CLIENT_ID
-- CLIENT_SECRET
 - TOKEN_CACHE_PATH
-- M365_USER_EMAIL
 
-## Required Microsoft Graph Permissions
+No `CLIENT_SECRET` is needed – the skill uses delegated (device-code) authentication.
 
-**Application permissions** (unattended/daemon access):
-`Mail.ReadWrite.All`, `Mail.Send`, `Calendars.ReadWrite.All`,
-`Files.ReadWrite.All`, `Contacts.ReadWrite`, `Tasks.ReadWrite.All`,
-`User.ReadWrite.All`
+## Required Microsoft Graph Permissions (Delegated)
 
-**Delegated permissions** (required for OneNote):
-`Notes.ReadWrite.All`, `offline_access`
+All permissions below must be added as **delegated** permissions in Entra ID and
+granted admin consent:
+
+`User.Read`, `openid`, `profile`, `offline_access`,
+`Mail.ReadWrite`, `Mail.Send`,
+`Calendars.ReadWrite`, `Contacts.ReadWrite`, `MailboxFolder.ReadWrite`,
+`Tasks.ReadWrite`, `Files.ReadWrite`, `Notes.ReadWrite`,
+`Sites.ReadWrite.All`,
+`Bookings.Manage.All`, `Bookings.ReadWrite.All`, `BookingsAppointment.ReadWrite.All`,
+`Chat.Create`, `Chat.ReadWrite`, `OnlineMeetings.ReadWrite`
+
+## First-Time Setup
+
+```bash
+m365 auth-login
+```
+
+Open `https://microsoft.com/devicelogin` on any device and enter the displayed code.
+After sign-in the app runs headless; tokens refresh automatically.
 
 ## Commands
+
+### Auth
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `auth-login` | Force device-code login / re-authentication | `m365 auth-login` |
 
 ### Mail
 
@@ -159,6 +179,45 @@ Required environment variables:
 | Command | Description | Example |
 |---------|-------------|---------|
 | `onenote-create \<nb\> \<sec\> \<title\> \<html\>` | Create OneNote page | `m365 onenote-create WorkNotes April "Sync" "<h1>Notes</h1>"` |
+| `notes-list` | List notebooks | `m365 notes-list` |
+| `notes-list --sections \<nb_id\>` | List sections in notebook | `m365 notes-list --sections AAMk...` |
+| `notes-list --pages \<sec_id\>` | List pages in section | `m365 notes-list --pages AAMk...` |
+
+### Teams Chat
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `chat-list [N]` | List chats (default 20) | `m365 chat-list 10` |
+| `chat-create --members EMAIL[,...]` | Create a chat (1 address = oneOnOne, 2+ = group) | `m365 chat-create --members alice@co.com` |
+| `chat-send \<chat_id\> --body TEXT` | Send a message | `m365 chat-send 19:abc...@thread.v2 --body "Hello team!"` |
+| `chat-read \<chat_id\> [N]` | Read messages (default 20) | `m365 chat-read 19:abc...@thread.v2 10` |
+
+### Online Meetings
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `meeting-create --subject TEXT --start ISO --end ISO` | Create online meeting | `m365 meeting-create --subject "Standup" --start 2026-04-10T09:00 --end 2026-04-10T09:30` |
+| `meeting-create ... --participants EMAIL[,...]` | Add participants | `m365 meeting-create --subject S --start T1 --end T2 --participants alice@co.com` |
+| `meeting-list [N]` | List upcoming meetings (N = days, default 30) | `m365 meeting-list 14` |
+| `meeting-read \<id\>` | Show meeting details | `m365 meeting-read AAES...` |
+| `meeting-delete \<id\>` | Delete meeting | `m365 meeting-delete AAES...` |
+
+### Bookings
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `booking-businesses` | List Bookings businesses | `m365 booking-businesses` |
+| `booking-list \<business_id\> [N]` | List appointments (default 50) | `m365 booking-list BIZ_ID 20` |
+| `booking-read \<business_id\> \<booking_id\>` | Show appointment details | `m365 booking-read BIZ_ID APT_ID` |
+| `booking-create \<business_id\> --service-id ID --start ISO --end ISO` | Create appointment | `m365 booking-create BIZ_ID --service-id SVC_ID --start 2026-04-10T14:00 --end 2026-04-10T15:00 --customer-name "Max Muster" --customer-email max@co.com` |
+| `booking-cancel \<business_id\> \<booking_id\>` | Cancel appointment | `m365 booking-cancel BIZ_ID APT_ID --reason "Umgeplant"` |
+
+### SharePoint Sites
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `sites-list [N]` | List accessible sites (default 20) | `m365 sites-list` |
+| `sites-search \<query\>` | Search sites by keyword | `m365 sites-search "Intranet"` |
 
 ## Backward-Compatible Aliases
 
@@ -181,8 +240,6 @@ The following legacy command names are still supported:
 | `download <remote> <local>` | `onedrive-download <remote> <local>` |
 | `todo-list-lists` | `tasklist-list` |
 | `todo-create-list <name>` | `tasklist-create <name>` |
-| `todo-rename-list <id> <name>` | *(use tasklist operations)* |
-| `todo-delete-list <id>` | *(use tasklist operations)* |
 | `todo-list-tasks <id>` | `task-list --list-id <id>` |
 | `todo-all-tasks` | `task-list` |
 | `todo-task-today` | `task-list --status notStarted` |
@@ -194,12 +251,13 @@ The following legacy command names are still supported:
 | `todo-move-task <src> <task-id> <dst>` | *(still supported directly)* |
 
 ## Notes
-- Mail access requires Exchange Online RBAC for Applications (recommended) in addition to Mail.ReadWrite.All and Mail.Send
-- Legacy Application Access Policy (New-ApplicationAccessPolicy) is deprecated – use RBAC for Applications instead
-- Tasks.ReadWrite.All permission required for ToDo/task features (add to app registration)
-- OneNote requires delegated Notes.ReadWrite.All permission
-- User.ReadWrite.All is required for user-read and user-update commands
+- Authentication uses delegated (device-code) flow – no client secret required
+- Run `m365 auth-login` for initial setup or after token expiry
+- Tokens are cached and auto-refreshed; re-auth needed only after ~90 days of inactivity
+- All API calls use `/me/…` endpoints – no M365_USER_EMAIL required
+- Chat and Meetings require a Microsoft 365 license that includes Teams
+- Bookings requires a Microsoft Bookings license in the tenant
+- `--count` flag is available on mail-list, contact-list, and task-list
+- `onedrive-share --anyone` creates an anonymous link; omitting `--anyone` creates an org link
 - Excel update uses Graph API directly; file must not be open in Office
 - Word and PowerPoint use download → edit locally → re-upload workflow
-- `--count` flag is available on mail-list, contact-list, and task-list
-- `onedrive-share --anyone` creates an anonymous link; omitting `--anyone` creates an organization link

@@ -1,9 +1,9 @@
 # install-m365-openclaw
 
-OpenClaw Skill für unattended Microsoft 365 Zugriff via Graph API.
+OpenClaw Skill für Microsoft 365 Zugriff via Graph API mit delegierten Berechtigungen (Device-Code Flow).
 
-**Version:** 0.3.0 (RBAC for Applications – Microsoft Recommended)  
-**Ziel:** Cleotine Claw als persönliche Assistentin im Multiuser-OpenClaw-System auf Ubuntu Server (headless).
+**Version:** 0.5.0 (Delegated Permissions – Device-Code Flow)  
+**Ziel:** Headless M365-Zugriff für OpenClaw-Agenten – einmalige Anmeldung per Device-Code, danach dauerhaft tokenbasiert.
 
 ## Schnellstart
 
@@ -13,9 +13,19 @@ curl -L https://raw.githubusercontent.com/noviceiii/install-m365-openclaw/main/i
 
 ## Voraussetzungen & Setup
 
-1. Entra ID App Registration → [Microsoft-ENTRA-ID-installation.md](Microsoft-ENTRA-ID-installation.md)
-2. Exchange Online RBAC (Pflicht für Mail) → [Microsoft-Exchange-Policy-installation.md](Microsoft-Exchange-Policy-installation.md)
-3. Credentials in `~/.openclaw/skills/m365-graph/.env` eintragen
-4. Erste Auth: `m365 calendar-list`
+1. Entra ID App Registration (Delegated Permissions) → [Microsoft-ENTRA-ID-installation.md](Microsoft-ENTRA-ID-installation.md)
+2. Credentials in `~/.openclaw/skills/m365-graph/.env` eintragen (TENANT_ID, CLIENT_ID)
+3. Erste Anmeldung per Device-Code: `m365 auth-login`
+4. Danach headless: `m365 calendar-list`
 
 Siehe [SKILL.md](SKILL.md) für alle verfügbaren Befehle.
+
+## Authentifizierung
+
+Die Skill verwendet **delegierte Berechtigungen** mit **Device-Code Flow**:
+
+- Der Benutzer meldet sich **einmalig** interaktiv an auf **https://microsoft.com/devicelogin**
+- Der Code wird im Terminal angezeigt
+- Nach der Anmeldung speichert die App Refresh-Tokens und arbeitet **dauerhaft headless**
+- Kein Browser auf dem Server nötig
+- Kein Client-Secret nötig

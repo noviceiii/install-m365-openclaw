@@ -1,10 +1,8 @@
 """
-__main__.py – CLI entry point for the OpenClaw M365 skill (v0.3.0).
+__main__.py – CLI entry point for the OpenClaw M365 skill (v0.4.0).
 
 Invoked as:  python -m m365_openclaw <command> [arguments...]
 Or via the  m365  wrapper script placed in ~/.local/bin.
-
-All v0.1.0 commands remain 100% compatible.
 """
 
 import argparse
@@ -12,84 +10,208 @@ import json
 import sys
 
 USAGE = """\
-OpenClaw M365 CLI v0.3.0 – Microsoft 365 for agents
+OpenClaw M365 CLI v0.4.0 – Microsoft 365 for agents
 
 ━━━ MAIL ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   mail-list [N]
-      List N recent inbox messages with IDs (default: 20)
+      List N recent messages (default: 20, max: 500).
+      --sort new-old|old-new   Sort order (default: new-old)
+      --unread                 Only unread messages
+      --folder NAME            Folder name (default: inbox). Well-known:
+                               inbox, sent, drafts, deleted, archive, junk
+      --search-by-email ADDR   Filter by sender e-mail address
+      --search-by-subject TEXT Filter by subject (contains)
+      --search TEXT            Full-text search
+      --count                  Print count only
 
-  send-mail <to> <subject> <body>
-            [--cc addr,...] [--bcc addr,...] [--importance High|Normal|Low]
-            [--sensitivity Normal|Personal|Private|Confidential]
-            [--attach /path/to/file] [--delivery-receipt] [--read-receipt]
-      Send an email. Multiple --attach flags allowed.
+  mail-send
+      Send an e-mail.
+      --to ADDR[,...]   Recipient(s), required
+      --subject TEXT    Subject, required
+      --body TEXT       Body (plain text or HTML), required
+      --cc ADDR[,...]   Carbon copy
+      --bcc ADDR[,...]  Blind carbon copy
+      --attach FILE     Attach a local file (repeat for multiple)
+      --priority High|Normal|Low   Priority (default: Normal)
 
-  mail-search <query>
-      Search inbox by subject keyword; returns messages with IDs.
+  mail-read <message_id>
+      Show details of a message (body truncated to 200 chars by default).
+      --full-body      Show complete body
+      --read-header    Show headers only (no body)
+      --mark-read      Mark message as read
+      --mark-unread    Mark message as unread
 
-  mail-headers <message_id>
-      Show headers/metadata of a specific message.
+  mail-reply <message_id>
+      Reply to a message.
+      --body TEXT      Reply body, required
+      --reply-all      Reply to all recipients
 
-  mail-reply <message_id> <body>
-      Reply to the sender of a message.
+  mail-forward <message_id>
+      Forward a message.
+      --to ADDR        Recipient, required
+      --body TEXT      Optional comment
 
-  mail-reply-all <message_id> <body>
-      Reply to all recipients of a message.
+  mail-handle <message_id>
+      Delete, archive or move a message.
+      --delete         Permanently delete
+      --archive        Move to archive folder
+      --move FOLDER    Move to named folder
 
-  mail-forward <message_id> <to> [body]
-      Forward a message to a new recipient.
-
-  mail-delete <message_id>
-      Permanently delete a message.
-
-  mail-move <message_id> <folder>
-      Move a message to another folder.
-      Well-known folders: inbox, sent, drafts, deleted, archive, junk
+  mailbox-handle
+      Manage mail folders.
+      --folder-create NAME    Create a new folder
+      --folder-delete NAME    Delete a folder (by name or ID)
+      --folder-rename ID NAME Rename a folder
 
 ━━━ CALENDAR ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  calendar-list [days]
-      List upcoming events (default: 7 days)
+  calendar-list [N]
+      List upcoming events (N = days into the future, default: 7).
 
-  calendar-create <subject> <start_iso> <end_iso> [body]
-                  [--attendees email,...] [--optional-attendees email,...]
-                  [--location "Place"] [--private] [--reminder <minutes>]
-                  [--attach /path/to/file]
-      Create a calendar event (ISO 8601, e.g. 2026-04-15T10:00:00)
+  calendar-create
+      Create a calendar event.
+      --subject TEXT   Event title, required
+      --start ISO      Start datetime (ISO 8601), required
+      --end ISO        End datetime (ISO 8601), required
+      --body TEXT      Description
+      --location TEXT  Location
+      --required EMAIL Required attendee(s), comma-separated
+      --optional EMAIL Optional attendee(s), comma-separated
+      --private        Mark as private
+      --reminder N     Reminder N minutes before event
+      --attach FILE    Attach a local file
+
+  calendar-read <event_id>
+      Show details of a calendar event.
+      --participants   List participants and their status
+      --cancel         Cancel the event (organizer only)
+      --cancel-no-info Cancel without sending cancellation notice
+      --delete         Permanently delete the event
+
+  calendar-handle <event_id>
+      Respond to a meeting invitation.
+      --confirm-accept    Accept the invitation
+      --confirm-tentative Tentatively accept
+      --confirm-deny      Decline the invitation
 
 ━━━ CONTACTS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  contacts-list [N]
-      List N contacts as a table: First, Last, Work Mail, Home Mail,
-      Work Phone, Home Phone, Mobile (default: 100)
+  contact-list [N]
+      List N contacts (default: 100) as a table.
+      --sort by-last|by-first   Sort order
+      --count                   Print count only
 
-  contacts-get <name>
-      Show all fields for the first contact whose name contains <name>.
+  contact-read <contact_id>
+      Show all fields of a contact by ID.
 
-  contacts-create <first> <last> [email] [phone]
-                  [--home-email e] [--home-phone p] [--mobile-phone p]
-                  [--work-street s] [--work-city c] [--work-zip z] [--work-country c]
-                  [--home-street s] [--home-city c] [--home-zip z] [--home-country c]
-                  [--birthday YYYY-MM-DDT00:00:00Z] [--anniversary YYYY-MM-DDT00:00:00Z]
-                  [--website URL] [--work-website URL] [--spouse name] [--notes text]
-      Add a new contact. email and phone set work email/phone.
+  contact-edit <contact_id>
+      Update fields of an existing contact.
+      --given-name TEXT        First name
+      --surname TEXT           Last name
+      --email-business EMAIL   Business e-mail
+      --email-personal EMAIL   Personal e-mail
+      --phone-mobile PHONE     Mobile phone
+      --phone-business PHONE   Business phone
+      --phone-home PHONE       Home phone
+      --birthday YYYY-MM-DDT00:00:00Z
+      --notes TEXT             Personal notes
+      --company TEXT           Company name
+      --job-title TEXT         Job title
 
-  contacts-photo-set <contact_id> <photo_path>
-      Upload a profile photo (JPEG) for a contact.
+  contact-create <first> <last>
+      Create a new contact.
+      --email-business EMAIL   Business e-mail
+      --email-personal EMAIL   Personal e-mail
+      --phone-mobile PHONE
+      --phone-business PHONE
+      --phone-home PHONE
+      --birthday YYYY-MM-DDT00:00:00Z
+      --notes TEXT
 
-  contacts-photo-delete <contact_id>
-      Remove the profile photo for a contact.
+  contact-photo <contact_id>
+      Manage a contact's profile photo.
+      --upload FILE   Upload photo (JPEG/PNG)
+      --delete        Delete photo
+      --download PATH Save photo to local file
 
-  contacts-photo-get <contact_id> <save_path>
-      Download the profile photo of a contact to a local file.
+  contactlist-list
+      Show all contact folders / contact lists.
+
+  contactlist-create <name>
+      Create a new contact folder.
+
+  contactlist-delete <folder_id>
+      Delete a contact folder.
+
+━━━ TASKS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  task-list [N]
+      List tasks (default: 50).
+      --list-id ID   Restrict to a specific task list
+      --status STATUS   Filter: notStarted|inProgress|completed
+      --count        Print count only
+
+  task-create
+      Create a new task.
+      --title TEXT   Task title, required
+      --list-id ID   Task list ID (defaults to first list)
+      --due YYYY-MM-DDTHH:MM:SS   Due date
+      --body TEXT    Notes / description
+      --priority low|normal|high
+
+  task-read <task_id>
+      Show details of a task.
+      --list-id ID   Task list ID (required if task ID is ambiguous)
+
+  task-update <task_id>
+      Update a task.
+      --list-id ID   Task list ID
+      --title TEXT
+      --status notStarted|inProgress|completed
+      --due YYYY-MM-DDTHH:MM:SS
+      --complete     Mark as completed
+
+  task-delete <task_id>
+      Delete a task.
+      --list-id ID   Task list ID
+
+  tasklist-list
+      List all task lists with their IDs.
+
+  tasklist-create <name>
+      Create a new task list.
+
+━━━ USER ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  user-read
+      Show the own user profile.
+
+  user-update
+      Update the own user profile.
+      --display-name TEXT
+      --given-name TEXT
+      --surname TEXT
+      --mobile-phone PHONE
+      --job-title TEXT
+      --department TEXT
+      --office-location TEXT
 
 ━━━ ONEDRIVE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   onedrive-list [folder]
       List files in a OneDrive folder (default: /)
 
-  upload <local_path> <remote_path>
-      Upload a local file to OneDrive
+  onedrive-upload <local_path> <remote_path>
+      Upload a local file to OneDrive.
 
-  download <remote_path> <local_path>
-      Download a file from OneDrive
+  onedrive-download <remote_path> <local_path>
+      Download a file from OneDrive.
+
+  onedrive-delete <remote_path>
+      Delete a file or folder on OneDrive.
+
+  onedrive-move <old_path> <new_path>
+      Move or rename a file/folder on OneDrive.
+
+  onedrive-share <remote_path>
+      Create a share link for a file.
+      --anyone        Share with anyone (default: organization)
+      --edit          Allow editing (default: view-only)
 
 ━━━ ONENOTE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   onenote-create <notebook> <section> <title> <html>
@@ -104,50 +226,6 @@ OpenClaw M365 CLI v0.3.0 – Microsoft 365 for agents
 
   ppt-update <remote_path> <slide_number> key=value [key=value ...]
       Replace text in a PowerPoint slide (0-indexed)
-
-━━━ MICROSOFT TODO ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  todo-list-lists
-      List all ToDo task lists with their IDs.
-
-  todo-create-list <name>
-      Create a new task list.
-
-  todo-rename-list <list_id> <new_name>
-      Rename an existing task list.
-
-  todo-delete-list <list_id>
-      Delete a task list and all its tasks.
-
-  todo-list-tasks <list_id> [--due-after YYYY-MM-DD] [--due-before YYYY-MM-DD]
-      List tasks in a specific list (optionally filtered by due date range).
-
-  todo-all-tasks [--due-after YYYY-MM-DD] [--due-before YYYY-MM-DD]
-      List all tasks across every task list (optionally filtered by due date range).
-
-  todo-task-today
-      List all tasks due today across every task list.
-
-  todo-create-task <list_id> <title>
-                   [--note text] [--due YYYY-MM-DDT00:00:00]
-                   [--reminder YYYY-MM-DDTHH:MM:SS]
-      Create a new task in a list.
-
-  todo-update-task <list_id> <task_id>
-                   [--title text] [--note text] [--due YYYY-MM-DDT00:00:00]
-                   [--reminder YYYY-MM-DDTHH:MM:SS]
-      Update fields of an existing task.
-
-  todo-complete-task <list_id> <task_id>
-      Mark a task as completed.
-
-  todo-add-step <list_id> <task_id> <step_title>
-      Add a checklist step (subtask) to a task.
-
-  todo-complete-step <list_id> <task_id> <step_id>
-      Mark an individual step as completed.
-
-  todo-move-task <from_list_id> <task_id> <to_list_id>
-      Move a task to a different list (copy + delete).
 """
 
 
@@ -155,55 +233,23 @@ def _print_json(data):
     print(json.dumps(data, indent=2, default=str))
 
 
-def _parse_send_mail_args(args):
-    """Parse extended send-mail arguments."""
-    parser = argparse.ArgumentParser(prog="m365 send-mail", add_help=False)
-    parser.add_argument("to")
-    parser.add_argument("subject")
-    parser.add_argument("body")
-    parser.add_argument("--cc", action="append", default=[])
-    parser.add_argument("--bcc", action="append", default=[])
-    parser.add_argument("--importance", default="Normal",
-                        choices=["High", "Normal", "Low"])
-    parser.add_argument("--sensitivity", default="Normal",
-                        choices=["Normal", "Personal", "Private", "Confidential"])
-    parser.add_argument("--attach", action="append", default=[], dest="attachments")
-    parser.add_argument("--delivery-receipt", action="store_true")
-    parser.add_argument("--read-receipt", action="store_true")
-    return parser.parse_args(args)
-
-
-def _parse_calendar_create_args(args):
-    """Parse extended calendar-create arguments."""
-    parser = argparse.ArgumentParser(prog="m365 calendar-create", add_help=False)
-    parser.add_argument("subject")
-    parser.add_argument("start_iso")
-    parser.add_argument("end_iso")
-    parser.add_argument("body", nargs="?", default="")
-    parser.add_argument("--location", default="")
-    parser.add_argument("--required", action="append", default=[], dest="required_attendees")
-    parser.add_argument("--optional", action="append", default=[], dest="optional_attendees")
-    parser.add_argument("--private", action="store_true")
-    parser.add_argument("--reminder-minutes", type=int, default=15)
-    parser.add_argument("--attach", action="append", default=[], dest="attachments")
-    return parser.parse_args(args)
-
-
-def _parse_contacts_create_args(args):
-    """Parse extended contacts-create arguments."""
-    parser = argparse.ArgumentParser(prog="m365 contacts-create", add_help=False)
-    parser.add_argument("first")
-    parser.add_argument("last")
-    parser.add_argument("email_pos", nargs="?", default=None, metavar="email")
-    parser.add_argument("phone_pos", nargs="?", default=None, metavar="phone")
-    parser.add_argument("--email-business", default=None)
-    parser.add_argument("--email-personal", default=None)
-    parser.add_argument("--phone-business", default=None)
-    parser.add_argument("--phone-mobile", default=None)
-    parser.add_argument("--phone-home", default=None)
-    parser.add_argument("--birthday", default=None)
-    parser.add_argument("--notes", default=None)
-    return parser.parse_args(args)
+def _print_tasks(tasks, show_list=False):
+    """Pretty-print a list of task dicts."""
+    if not tasks:
+        print("No tasks found.")
+        return
+    for t in tasks:
+        done = "\u2713" if t.get('is_done') else "\u25cb"
+        due = f" (due: {t['due'][:10]})" if t.get('due') else ""
+        list_info = f" [{t.get('list_name', '')}]" if show_list else ""
+        print(f"{done} {t['title']}{due}{list_info}")
+        print(f"  ID: {t['id']}")
+        if t.get('note'):
+            preview = t['note'].replace('\n', ' ')[:100]
+            print(f"  Note: {preview}")
+        for step in t.get('steps', []):
+            s_done = "\u2713" if step['is_done'] else "\u25cb"
+            print(f"    {s_done} {step['title']}  (step ID: {step['id']})")
 
 
 def main():
@@ -226,111 +272,136 @@ def main():
         # ── Mail ─────────────────────────────────────────────────────────────
 
         if cmd == "mail-list":
-            limit = int(args[0]) if args else 20
-            msgs = client.list_mail(limit=limit)
-            if not msgs:
-                print("No messages found.")
+            parser = argparse.ArgumentParser(prog='m365 mail-list', add_help=False)
+            parser.add_argument('limit', nargs='?', type=int, default=20)
+            parser.add_argument('--sort', default='new-old',
+                                choices=['new-old', 'old-new'])
+            parser.add_argument('--unread', action='store_true')
+            parser.add_argument('--folder', default='inbox')
+            parser.add_argument('--search-by-email', default=None)
+            parser.add_argument('--search-by-subject', default=None)
+            parser.add_argument('--search', default=None)
+            parser.add_argument('--count', action='store_true')
+            pargs = parser.parse_args(args)
+            if pargs.count:
+                result = client.list_mail(
+                    limit=pargs.limit, folder=pargs.folder,
+                    unread_only=pargs.unread, sort=pargs.sort,
+                    search_by_email=pargs.search_by_email,
+                    search_by_subject=pargs.search_by_subject,
+                    search=pargs.search, count_only=True,
+                )
+                print(f"Count: {result.get('count', 0)}")
             else:
-                for m in msgs:
-                    tag = "" if m['is_read'] else "[NEW] "
-                    print(f"{tag}{m['date']} | ID: {m['id']} | {m['from']}: {m['subject']}")
+                msgs = client.list_mail(
+                    limit=pargs.limit, folder=pargs.folder,
+                    unread_only=pargs.unread, sort=pargs.sort,
+                    search_by_email=pargs.search_by_email,
+                    search_by_subject=pargs.search_by_subject,
+                    search=pargs.search,
+                )
+                if not msgs:
+                    print("No messages found.")
+                else:
+                    for m in msgs:
+                        tag = "" if m['is_read'] else "[NEW] "
+                        print(f"{tag}{m['date']} | ID: {m['id']} | {m['from']}: {m['subject']}")
 
-        elif cmd == "send-mail":
-            import argparse
-            parser = argparse.ArgumentParser(prog='m365 send-mail')
-            parser.add_argument('to', help='Recipient address(es), comma-separated')
-            parser.add_argument('subject', help='Email subject')
-            parser.add_argument('body', help='Email body (plain text or HTML)')
-            parser.add_argument('--cc', default='', help='CC addresses, comma-separated')
-            parser.add_argument('--bcc', default='', help='BCC addresses, comma-separated')
-            parser.add_argument('--importance', choices=['High', 'Normal', 'Low'],
-                                default='Normal')
-            parser.add_argument('--sensitivity',
-                                choices=['Normal', 'Personal', 'Private', 'Confidential'],
-                                default='Normal')
-            parser.add_argument('--attach', action='append', metavar='FILE', default=[],
-                                help='Attach a local file (repeat for multiple files)')
-            parser.add_argument('--delivery-receipt', action='store_true',
-                                help='Request delivery receipt')
-            parser.add_argument('--read-receipt', action='store_true',
-                                help='Request read receipt')
+        elif cmd == "mail-send":
+            parser = argparse.ArgumentParser(prog='m365 mail-send')
+            parser.add_argument('--to', required=True,
+                                help='Recipient(s), comma-separated')
+            parser.add_argument('--subject', required=True)
+            parser.add_argument('--body', required=True)
+            parser.add_argument('--cc', default='')
+            parser.add_argument('--bcc', default='')
+            parser.add_argument('--priority', default='Normal',
+                                choices=['High', 'Normal', 'Low'])
+            parser.add_argument('--attach', action='append', default=[],
+                                dest='attachments', metavar='FILE')
             pargs = parser.parse_args(args)
             to_list = [a.strip() for a in pargs.to.split(',') if a.strip()]
             cc_list = [a.strip() for a in pargs.cc.split(',') if a.strip()]
             bcc_list = [a.strip() for a in pargs.bcc.split(',') if a.strip()]
             print(client.send_mail(
                 to_list if len(to_list) > 1 else to_list[0],
-                pargs.subject,
-                pargs.body,
-                cc=cc_list or None,
-                bcc=bcc_list or None,
-                importance=pargs.importance,
-                sensitivity=pargs.sensitivity,
-                attachments=pargs.attach or None,
-                request_delivery_receipt=pargs.delivery_receipt,
-                request_read_receipt=pargs.read_receipt,
+                pargs.subject, pargs.body,
+                cc=cc_list or None, bcc=bcc_list or None,
+                importance=pargs.priority,
+                attachments=pargs.attachments or None,
             ))
 
-        elif cmd == "mail-search":
-            if not args:
-                print("Usage: m365 mail-search <query>")
-                sys.exit(1)
-            msgs = client.search_mail(args[0])
-            if not msgs:
-                print("No matching messages found.")
-            else:
-                for m in msgs:
-                    tag = "" if m['is_read'] else "[NEW] "
-                    print(f"{tag}{m['date']} | ID: {m['id']} | {m['from_name']} <{m['from_address']}>: {m['subject']}")
-                    if m.get('body'):
-                        # Print first 200 chars of body for preview
-                        preview = m['body'].replace('\n', ' ').replace('\r', '')[:200]
-                        print(f"  Preview: {preview}")
-
-        elif cmd == "mail-headers":
-            if not args:
-                print("Usage: m365 mail-headers <message_id>")
-                sys.exit(1)
-            import json
-            headers = client.get_mail_headers(args[0])
-            print(json.dumps(headers, indent=2, ensure_ascii=False))
+        elif cmd == "mail-read":
+            parser = argparse.ArgumentParser(prog='m365 mail-read')
+            parser.add_argument('message_id')
+            parser.add_argument('--full-body', action='store_true')
+            parser.add_argument('--read-header', action='store_true')
+            parser.add_argument('--mark-read', action='store_true')
+            parser.add_argument('--mark-unread', action='store_true')
+            pargs = parser.parse_args(args)
+            result = client.read_mail(
+                pargs.message_id,
+                mark_as_read=pargs.mark_read,
+                mark_as_unread=pargs.mark_unread,
+                full_body=pargs.full_body,
+                headers_only=pargs.read_header,
+            )
+            _print_json(result)
 
         elif cmd == "mail-reply":
-            if len(args) < 2:
-                print("Usage: m365 mail-reply <message_id> <body>")
-                sys.exit(1)
-            print(client.reply_mail(args[0], args[1]))
-
-        elif cmd == "mail-reply-all":
-            if len(args) < 2:
-                print("Usage: m365 mail-reply-all <message_id> <body>")
-                sys.exit(1)
-            print(client.reply_all_mail(args[0], args[1]))
+            parser = argparse.ArgumentParser(prog='m365 mail-reply')
+            parser.add_argument('message_id')
+            parser.add_argument('--body', required=True)
+            parser.add_argument('--reply-all', action='store_true')
+            pargs = parser.parse_args(args)
+            if pargs.reply_all:
+                print(client.reply_all_mail(pargs.message_id, pargs.body))
+            else:
+                print(client.reply_mail(pargs.message_id, pargs.body))
 
         elif cmd == "mail-forward":
-            if len(args) < 2:
-                print("Usage: m365 mail-forward <message_id> <to> [body]")
-                sys.exit(1)
-            body = args[2] if len(args) > 2 else ""
-            print(client.forward_mail(args[0], args[1], body))
+            parser = argparse.ArgumentParser(prog='m365 mail-forward')
+            parser.add_argument('message_id')
+            parser.add_argument('--to', required=True)
+            parser.add_argument('--body', default='')
+            pargs = parser.parse_args(args)
+            to_list = [a.strip() for a in pargs.to.split(',') if a.strip()]
+            print(client.forward_mail(pargs.message_id, to_list, pargs.body))
 
-        elif cmd == "mail-delete":
-            if not args:
-                print("Usage: m365 mail-delete <message_id>")
-                sys.exit(1)
-            print(client.delete_mail(args[0]))
+        elif cmd == "mail-handle":
+            parser = argparse.ArgumentParser(prog='m365 mail-handle')
+            parser.add_argument('message_id')
+            group = parser.add_mutually_exclusive_group(required=True)
+            group.add_argument('--delete', action='store_true')
+            group.add_argument('--archive', action='store_true')
+            group.add_argument('--move', metavar='FOLDER')
+            pargs = parser.parse_args(args)
+            if pargs.delete:
+                print(client.delete_mail(pargs.message_id))
+            elif pargs.archive:
+                print(client.move_mail(pargs.message_id, 'archive'))
+            else:
+                print(client.move_mail(pargs.message_id, pargs.move))
 
-        elif cmd == "mail-move":
-            if len(args) < 2:
-                print("Usage: m365 mail-move <message_id> <folder>")
-                print("Well-known folders: inbox, sent, drafts, deleted, archive, junk")
-                sys.exit(1)
-            print(client.move_mail(args[0], args[1]))
+        elif cmd == "mailbox-handle":
+            parser = argparse.ArgumentParser(prog='m365 mailbox-handle')
+            group = parser.add_mutually_exclusive_group(required=True)
+            group.add_argument('--folder-create', metavar='NAME')
+            group.add_argument('--folder-delete', metavar='NAME_OR_ID')
+            group.add_argument('--folder-rename', nargs=2, metavar=('ID', 'NAME'))
+            pargs = parser.parse_args(args)
+            if pargs.folder_create:
+                print(client.create_mail_folder(pargs.folder_create))
+            elif pargs.folder_delete:
+                print(client.delete_mail_folder(pargs.folder_delete))
+            else:
+                fid, new_name = pargs.folder_rename
+                print(client.rename_mail_folder(fid, new_name))
 
         # ── Calendar ─────────────────────────────────────────────────────────
 
         elif cmd == "calendar-list":
-            days = int(args[0]) if args else 7
+            days = int(args[0]) if args and args[0].lstrip('-').isdigit() else 7
             events = client.get_calendar_events(days=days)
             if not events:
                 print(f"No events in the next {days} days.")
@@ -341,32 +412,27 @@ def main():
                     print(f"- {e['start']} | {e['subject']}{loc}")
 
         elif cmd == "calendar-create":
-            import argparse
             parser = argparse.ArgumentParser(prog='m365 calendar-create')
-            parser.add_argument('subject', help='Event title')
-            parser.add_argument('start_iso', help='Start datetime (ISO 8601)')
-            parser.add_argument('end_iso', help='End datetime (ISO 8601)')
-            parser.add_argument('body', nargs='?', default='', help='Event description')
-            parser.add_argument('--attendees', default='',
-                                help='Required attendees, comma-separated emails')
-            parser.add_argument('--optional-attendees', default='',
-                                help='Optional attendees, comma-separated emails')
-            parser.add_argument('--location', default='', help='Location or address')
-            parser.add_argument('--private', action='store_true',
-                                help='Mark event as private')
-            parser.add_argument('--reminder', type=int, metavar='MINUTES',
-                                help='Reminder N minutes before event')
-            parser.add_argument('--attach', metavar='FILE', default=None,
-                                help='Local file to attach to event')
+            parser.add_argument('--subject', required=True, help='Event title')
+            parser.add_argument('--start', required=True, dest='start_iso',
+                                help='Start datetime (ISO 8601)')
+            parser.add_argument('--end', required=True, dest='end_iso',
+                                help='End datetime (ISO 8601)')
+            parser.add_argument('--body', default='', help='Event description')
+            parser.add_argument('--location', default='')
+            parser.add_argument('--required', default='', dest='required_attendees')
+            parser.add_argument('--optional', default='', dest='optional_attendees')
+            parser.add_argument('--private', action='store_true')
+            parser.add_argument('--reminder', type=int, metavar='MINUTES')
+            parser.add_argument('--attach', metavar='FILE', default=None)
             pargs = parser.parse_args(args)
-            req_att = [e.strip() for e in pargs.attendees.split(',') if e.strip()]
-            opt_att = [e.strip() for e in pargs.optional_attendees.split(',') if e.strip()]
+            req_att = [e.strip() for e in pargs.required_attendees.split(',')
+                       if e.strip()]
+            opt_att = [e.strip() for e in pargs.optional_attendees.split(',')
+                       if e.strip()]
             print(client.create_calendar_event(
-                pargs.subject,
-                pargs.start_iso,
-                pargs.end_iso,
-                body=pargs.body,
-                location=pargs.location,
+                pargs.subject, pargs.start_iso, pargs.end_iso,
+                body=pargs.body, location=pargs.location,
                 required_attendees=req_att or None,
                 optional_attendees=opt_att or None,
                 is_private=pargs.private,
@@ -374,47 +440,130 @@ def main():
                 attachment=pargs.attach,
             ))
 
+        elif cmd == "calendar-read":
+            parser = argparse.ArgumentParser(prog='m365 calendar-read')
+            parser.add_argument('event_id')
+            parser.add_argument('--participants', action='store_true')
+            parser.add_argument('--cancel', action='store_true')
+            parser.add_argument('--cancel-no-info', action='store_true')
+            parser.add_argument('--delete', action='store_true')
+            pargs = parser.parse_args(args)
+            if pargs.cancel or pargs.cancel_no_info:
+                print(client.cancel_calendar_event(pargs.event_id))
+            elif pargs.delete:
+                print(client.delete_calendar_event(pargs.event_id))
+            else:
+                event = client.get_calendar_event(pargs.event_id)
+                if pargs.participants:
+                    print(f"Event: {event.get('subject')}")
+                    print("Attendees:")
+                    for a in event.get('attendees', []):
+                        print(f"  [{a.get('status', '?'):12}] "
+                              f"{a.get('name')} <{a.get('email')}> ({a.get('type')})")
+                else:
+                    _print_json(event)
+
+        elif cmd == "calendar-handle":
+            parser = argparse.ArgumentParser(prog='m365 calendar-handle')
+            parser.add_argument('event_id')
+            group = parser.add_mutually_exclusive_group(required=True)
+            group.add_argument('--confirm-accept', action='store_true')
+            group.add_argument('--confirm-tentative', action='store_true')
+            group.add_argument('--confirm-deny', action='store_true')
+            pargs = parser.parse_args(args)
+            if pargs.confirm_accept:
+                print(client.respond_calendar_event(pargs.event_id, 'accept'))
+            elif pargs.confirm_tentative:
+                print(client.respond_calendar_event(pargs.event_id, 'tentativelyAccept'))
+            else:
+                print(client.respond_calendar_event(pargs.event_id, 'decline'))
+
         # ── Contacts ─────────────────────────────────────────────────────────
 
-        elif cmd == "contacts-list":
-            limit = int(args[0]) if args else 100
-            contacts = client.list_contacts(limit=limit)
-            if not contacts:
+        elif cmd == "contact-list":
+            parser = argparse.ArgumentParser(prog='m365 contact-list', add_help=False)
+            parser.add_argument('limit', nargs='?', type=int, default=100)
+            parser.add_argument('--sort', default=None,
+                                choices=['by-last', 'by-first'])
+            parser.add_argument('--count', action='store_true')
+            pargs = parser.parse_args(args)
+            contacts = client.list_contacts(limit=pargs.limit)
+            if pargs.sort == 'by-last':
+                contacts.sort(key=lambda c: c.get('last_name', '').lower())
+            elif pargs.sort == 'by-first':
+                contacts.sort(key=lambda c: c.get('first_name', '').lower())
+            if pargs.count:
+                print(f"Count: {len(contacts)}")
+            elif not contacts:
                 print("No contacts found.")
             else:
-                header = f"{'First':<15} {'Last':<15} {'Work Email':<30} {'Home Email':<25} {'Work Phone':<18} {'Home Phone':<15} Mobile"
+                header = (
+                    f"{'First':<15} {'Last':<15} {'Work Email':<30} "
+                    f"{'Home Email':<25} {'Work Phone':<18} {'Mobile'}"
+                )
                 print(header)
                 print("-" * len(header))
                 for c in contacts:
                     print(
                         f"{c['first_name']:<15} {c['last_name']:<15} "
                         f"{c['work_email']:<30} {c['home_email']:<25} "
-                        f"{c['work_phone']:<18} {c['home_phone']:<15} {c['mobile_phone']}"
+                        f"{c['work_phone']:<18} {c['mobile_phone']}"
                     )
 
-        elif cmd == "contacts-get":
+        elif cmd == "contact-read":
             if not args:
-                print("Usage: m365 contacts-get <name>")
+                print("Usage: m365 contact-read <contact_id>")
                 sys.exit(1)
-            import json
-            contact = client.get_contact(args[0])
+            contact = client.get_contact_by_id(args[0])
             if not contact:
-                print(f"No contact found matching '{args[0]}'.")
+                print(f"No contact found with ID '{args[0]}'.")
             else:
-                print(json.dumps(contact, indent=2, ensure_ascii=False))
+                _print_json(contact)
 
-        elif cmd == "contacts-create":
-            import argparse
-            parser = argparse.ArgumentParser(prog='m365 contacts-create')
+        elif cmd == "contact-edit":
+            parser = argparse.ArgumentParser(prog='m365 contact-edit')
+            parser.add_argument('contact_id')
+            parser.add_argument('--given-name', default=None)
+            parser.add_argument('--surname', default=None)
+            parser.add_argument('--email-business', default=None)
+            parser.add_argument('--email-personal', default=None)
+            parser.add_argument('--phone-mobile', default=None)
+            parser.add_argument('--phone-business', default=None)
+            parser.add_argument('--phone-home', default=None)
+            parser.add_argument('--birthday', default=None)
+            parser.add_argument('--notes', default=None)
+            parser.add_argument('--company', default=None)
+            parser.add_argument('--job-title', default=None)
+            pargs = parser.parse_args(args)
+            print(client.update_contact(
+                pargs.contact_id,
+                given_name=pargs.given_name,
+                surname=pargs.surname,
+                email_business=pargs.email_business,
+                email_personal=pargs.email_personal,
+                phone_mobile=pargs.phone_mobile,
+                phone_business=pargs.phone_business,
+                phone_home=pargs.phone_home,
+                birthday=pargs.birthday,
+                notes=pargs.notes,
+                company=pargs.company,
+                job_title=pargs.job_title,
+            ))
+
+        elif cmd == "contact-create":
+            parser = argparse.ArgumentParser(prog='m365 contact-create')
             parser.add_argument('given_name', help='First name')
             parser.add_argument('surname', help='Last name')
-            parser.add_argument('email', nargs='?', default=None,
-                                help='Work email address (positional, optional)')
-            parser.add_argument('phone', nargs='?', default=None,
-                                help='Work phone (positional, optional)')
-            parser.add_argument('--home-email', default=None, metavar='EMAIL')
-            parser.add_argument('--home-phone', default=None, metavar='PHONE')
-            parser.add_argument('--mobile-phone', default=None, metavar='PHONE')
+            parser.add_argument('--email-business', default=None)
+            parser.add_argument('--email-personal', default=None)
+            parser.add_argument('--phone-mobile', default=None)
+            parser.add_argument('--phone-business', default=None)
+            parser.add_argument('--phone-home', default=None)
+            parser.add_argument('--birthday', default=None,
+                                metavar='YYYY-MM-DDT00:00:00Z')
+            parser.add_argument('--notes', default=None)
+            parser.add_argument('--company', default=None)
+            parser.add_argument('--job-title', default=None)
             parser.add_argument('--work-street', default=None)
             parser.add_argument('--work-city', default=None)
             parser.add_argument('--work-state', default=None)
@@ -425,23 +574,19 @@ def main():
             parser.add_argument('--home-state', default=None)
             parser.add_argument('--home-zip', default=None)
             parser.add_argument('--home-country', default=None)
-            parser.add_argument('--birthday', default=None,
-                                metavar='YYYY-MM-DDT00:00:00Z',
-                                help='Birthday in ISO 8601 format')
             parser.add_argument('--anniversary', default=None,
                                 metavar='YYYY-MM-DDT00:00:00Z')
-            parser.add_argument('--website', default=None, help='Personal website URL')
-            parser.add_argument('--work-website', default=None, help='Work website URL')
-            parser.add_argument('--spouse', default=None, help="Spouse's name")
-            parser.add_argument('--notes', default=None,
-                                help='Free-text notes (use for hobbies, zodiac, children etc.)')
+            parser.add_argument('--website', default=None)
+            parser.add_argument('--work-website', default=None)
+            parser.add_argument('--spouse', default=None)
             pargs = parser.parse_args(args)
             print(client.create_contact(
                 pargs.given_name, pargs.surname,
-                email=pargs.email, phone=pargs.phone,
-                home_email=pargs.home_email,
-                home_phone=pargs.home_phone,
-                mobile_phone=pargs.mobile_phone,
+                work_email=pargs.email_business,
+                home_email=pargs.email_personal,
+                work_phone=pargs.phone_business,
+                home_phone=pargs.phone_home,
+                mobile_phone=pargs.phone_mobile,
                 work_street=pargs.work_street, work_city=pargs.work_city,
                 work_state=pargs.work_state, work_zip=pargs.work_zip,
                 work_country=pargs.work_country,
@@ -453,23 +598,172 @@ def main():
                 spouse=pargs.spouse, notes=pargs.notes,
             ))
 
-        elif cmd == "contacts-photo-set":
-            if len(args) < 2:
-                print("Usage: m365 contacts-photo-set <contact_id> <photo_path>")
-                sys.exit(1)
-            print(client.set_contact_photo(args[0], args[1]))
+        elif cmd == "contact-photo":
+            parser = argparse.ArgumentParser(prog='m365 contact-photo')
+            parser.add_argument('contact_id')
+            group = parser.add_mutually_exclusive_group(required=True)
+            group.add_argument('--upload', metavar='FILE')
+            group.add_argument('--delete', action='store_true')
+            group.add_argument('--download', metavar='SAVE_PATH')
+            pargs = parser.parse_args(args)
+            if pargs.upload:
+                print(client.set_contact_photo(pargs.contact_id, pargs.upload))
+            elif pargs.delete:
+                print(client.delete_contact_photo(pargs.contact_id))
+            else:
+                print(client.get_contact_photo(pargs.contact_id, pargs.download))
 
-        elif cmd == "contacts-photo-delete":
+        elif cmd == "contactlist-list":
+            folders = client.list_contact_folders()
+            if not folders:
+                print("No contact folders found.")
+            else:
+                for f in folders:
+                    print(f"{f['id']:<50} {f['name']}")
+
+        elif cmd == "contactlist-create":
             if not args:
-                print("Usage: m365 contacts-photo-delete <contact_id>")
+                print("Usage: m365 contactlist-create <name>")
                 sys.exit(1)
-            print(client.delete_contact_photo(args[0]))
+            print(client.create_contact_folder(args[0]))
 
-        elif cmd == "contacts-photo-get":
-            if len(args) < 2:
-                print("Usage: m365 contacts-photo-get <contact_id> <save_path>")
+        elif cmd == "contactlist-delete":
+            if not args:
+                print("Usage: m365 contactlist-delete <folder_id>")
                 sys.exit(1)
-            print(client.get_contact_photo(args[0], args[1]))
+            print(client.delete_contact_folder(args[0]))
+
+        # ── Tasks ─────────────────────────────────────────────────────────────
+
+        elif cmd == "task-list":
+            parser = argparse.ArgumentParser(prog='m365 task-list', add_help=False)
+            parser.add_argument('limit', nargs='?', type=int, default=50)
+            parser.add_argument('--list-id', default=None)
+            parser.add_argument('--status', default=None,
+                                choices=['notStarted', 'inProgress', 'completed'])
+            parser.add_argument('--count', action='store_true')
+            pargs = parser.parse_args(args)
+            if pargs.list_id:
+                tasks = client.todo_list_tasks(pargs.list_id)
+            else:
+                tasks = client.todo_get_all_tasks()
+            if pargs.status:
+                tasks = [t for t in tasks if t.get('status') == pargs.status]
+            if pargs.count:
+                print(f"Count: {len(tasks)}")
+            else:
+                _print_tasks(tasks, show_list=(pargs.list_id is None))
+
+        elif cmd == "task-create":
+            parser = argparse.ArgumentParser(prog='m365 task-create')
+            parser.add_argument('--title', required=True)
+            parser.add_argument('--list-id', default=None)
+            parser.add_argument('--due', default=None, metavar='YYYY-MM-DDTHH:MM:SS')
+            parser.add_argument('--body', default=None)
+            parser.add_argument('--priority', default=None,
+                                choices=['low', 'normal', 'high'])
+            pargs = parser.parse_args(args)
+            list_id = pargs.list_id or client.todo_get_default_list_id()
+            if not list_id:
+                print("No task list found. Create one first with: m365 tasklist-create <name>",
+                      file=sys.stderr)
+                sys.exit(1)
+            print(client.todo_create_task(
+                list_id, pargs.title,
+                note=pargs.body,
+                due_date=pargs.due,
+            ))
+
+        elif cmd == "task-read":
+            parser = argparse.ArgumentParser(prog='m365 task-read')
+            parser.add_argument('task_id')
+            parser.add_argument('--list-id', default=None)
+            pargs = parser.parse_args(args)
+            list_id = pargs.list_id or client.todo_get_default_list_id()
+            if not list_id:
+                print("No task list found.", file=sys.stderr)
+                sys.exit(1)
+            task = client.todo_get_task(list_id, pargs.task_id)
+            if task:
+                _print_json(task)
+            else:
+                print(f"Task '{pargs.task_id}' not found.")
+
+        elif cmd == "task-update":
+            parser = argparse.ArgumentParser(prog='m365 task-update')
+            parser.add_argument('task_id')
+            parser.add_argument('--list-id', default=None)
+            parser.add_argument('--title', default=None)
+            parser.add_argument('--status', default=None,
+                                choices=['notStarted', 'inProgress', 'completed'])
+            parser.add_argument('--due', default=None, metavar='YYYY-MM-DDTHH:MM:SS')
+            parser.add_argument('--complete', action='store_true')
+            pargs = parser.parse_args(args)
+            list_id = pargs.list_id or client.todo_get_default_list_id()
+            if not list_id:
+                print("No task list found.", file=sys.stderr)
+                sys.exit(1)
+            if pargs.complete:
+                print(client.todo_complete_task(list_id, pargs.task_id))
+            else:
+                print(client.todo_update_task(
+                    list_id, pargs.task_id,
+                    title=pargs.title,
+                    due_date=pargs.due,
+                ))
+
+        elif cmd == "task-delete":
+            parser = argparse.ArgumentParser(prog='m365 task-delete')
+            parser.add_argument('task_id')
+            parser.add_argument('--list-id', default=None)
+            pargs = parser.parse_args(args)
+            list_id = pargs.list_id or client.todo_get_default_list_id()
+            if not list_id:
+                print("No task list found.", file=sys.stderr)
+                sys.exit(1)
+            print(client.todo_delete_task(list_id, pargs.task_id))
+
+        elif cmd == "tasklist-list":
+            lists = client.todo_list_task_lists()
+            if not lists:
+                print("No task lists found.")
+            else:
+                print(f"{'ID':<50} Name")
+                print("-" * 70)
+                for lst in lists:
+                    shared = " [shared]" if lst.get('is_shared') else ""
+                    print(f"{lst['id']:<50} {lst['name']}{shared}")
+
+        elif cmd == "tasklist-create":
+            if not args:
+                print("Usage: m365 tasklist-create <name>")
+                sys.exit(1)
+            print(client.todo_create_task_list(args[0]))
+
+        # ── User ─────────────────────────────────────────────────────────────
+
+        elif cmd == "user-read":
+            _print_json(client.get_user())
+
+        elif cmd == "user-update":
+            parser = argparse.ArgumentParser(prog='m365 user-update')
+            parser.add_argument('--display-name', default=None)
+            parser.add_argument('--given-name', default=None)
+            parser.add_argument('--surname', default=None)
+            parser.add_argument('--mobile-phone', default=None)
+            parser.add_argument('--job-title', default=None)
+            parser.add_argument('--department', default=None)
+            parser.add_argument('--office-location', default=None)
+            pargs = parser.parse_args(args)
+            print(client.update_user(
+                display_name=pargs.display_name,
+                given_name=pargs.given_name,
+                surname=pargs.surname,
+                mobile_phone=pargs.mobile_phone,
+                job_title=pargs.job_title,
+                department=pargs.department,
+                office_location=pargs.office_location,
+            ))
 
         # ── OneDrive ─────────────────────────────────────────────────────────
 
@@ -483,17 +777,38 @@ def main():
                     size = f" ({item['size']} B)" if item.get('size') else ""
                     print(f"[{item['type'].upper()}] {item['name']}{size}")
 
-        elif cmd == "upload":
+        elif cmd == "onedrive-upload":
             if len(args) < 2:
-                print("Usage: m365 upload <local_path> <remote_path>")
+                print("Usage: m365 onedrive-upload <local_path> <remote_path>")
                 sys.exit(1)
             print(client.onedrive_upload(args[0], args[1]))
 
-        elif cmd == "download":
+        elif cmd == "onedrive-download":
             if len(args) < 2:
-                print("Usage: m365 download <remote_path> <local_path>")
+                print("Usage: m365 onedrive-download <remote_path> <local_path>")
                 sys.exit(1)
             print(client.onedrive_download(args[0], args[1]))
+
+        elif cmd == "onedrive-delete":
+            if not args:
+                print("Usage: m365 onedrive-delete <remote_path>")
+                sys.exit(1)
+            print(client.onedrive_delete(args[0]))
+
+        elif cmd == "onedrive-move":
+            if len(args) < 2:
+                print("Usage: m365 onedrive-move <old_path> <new_path>")
+                sys.exit(1)
+            print(client.onedrive_move(args[0], args[1]))
+
+        elif cmd == "onedrive-share":
+            parser = argparse.ArgumentParser(prog='m365 onedrive-share')
+            parser.add_argument('remote_path')
+            parser.add_argument('--anyone', action='store_true')
+            parser.add_argument('--edit', action='store_true')
+            pargs = parser.parse_args(args)
+            print(client.onedrive_share(pargs.remote_path,
+                                        anyone=pargs.anyone, edit=pargs.edit))
 
         # ── OneNote ──────────────────────────────────────────────────────────
 
@@ -534,7 +849,180 @@ def main():
                     replacements[k] = v
             print(client.ppt_update(args[0], args[1], replacements))
 
-        # ── Microsoft ToDo ────────────────────────────────────────────────────
+        # ── Backward-compatible aliases ───────────────────────────────────────
+
+        elif cmd == "send-mail":
+            # Legacy positional form: send-mail <to> <subject> <body> [options]
+            parser = argparse.ArgumentParser(prog='m365 send-mail')
+            parser.add_argument('to')
+            parser.add_argument('subject')
+            parser.add_argument('body')
+            parser.add_argument('--cc', default='')
+            parser.add_argument('--bcc', default='')
+            parser.add_argument('--importance', choices=['High', 'Normal', 'Low'],
+                                default='Normal')
+            parser.add_argument('--sensitivity',
+                                choices=['Normal', 'Personal', 'Private', 'Confidential'],
+                                default='Normal')
+            parser.add_argument('--attach', action='append', default=[],
+                                dest='attachments')
+            parser.add_argument('--delivery-receipt', action='store_true')
+            parser.add_argument('--read-receipt', action='store_true')
+            pargs = parser.parse_args(args)
+            to_list = [a.strip() for a in pargs.to.split(',') if a.strip()]
+            cc_list = [a.strip() for a in pargs.cc.split(',') if a.strip()]
+            bcc_list = [a.strip() for a in pargs.bcc.split(',') if a.strip()]
+            print(client.send_mail(
+                to_list if len(to_list) > 1 else to_list[0],
+                pargs.subject, pargs.body,
+                cc=cc_list or None, bcc=bcc_list or None,
+                importance=pargs.importance, sensitivity=pargs.sensitivity,
+                attachments=pargs.attachments or None,
+                request_delivery_receipt=pargs.delivery_receipt,
+                request_read_receipt=pargs.read_receipt,
+            ))
+
+        elif cmd == "mail-search":
+            if not args:
+                print("Usage: m365 mail-search <query>")
+                sys.exit(1)
+            msgs = client.search_mail(args[0])
+            if not msgs:
+                print("No matching messages found.")
+            else:
+                for m in msgs:
+                    tag = "" if m['is_read'] else "[NEW] "
+                    print(f"{tag}{m['date']} | ID: {m['id']} | "
+                          f"{m['from_name']} <{m['from_address']}>: {m['subject']}")
+                    if m.get('body'):
+                        preview = m['body'].replace('\n', ' ').replace('\r', '')[:200]
+                        print(f"  Preview: {preview}")
+
+        elif cmd == "mail-headers":
+            if not args:
+                print("Usage: m365 mail-headers <message_id>")
+                sys.exit(1)
+            result = client.read_mail(args[0], headers_only=True)
+            _print_json(result)
+
+        elif cmd == "mail-reply-all":
+            if len(args) < 2:
+                print("Usage: m365 mail-reply-all <message_id> <body>")
+                sys.exit(1)
+            print(client.reply_all_mail(args[0], args[1]))
+
+        elif cmd == "mail-delete":
+            if not args:
+                print("Usage: m365 mail-delete <message_id>")
+                sys.exit(1)
+            print(client.delete_mail(args[0]))
+
+        elif cmd == "mail-move":
+            if len(args) < 2:
+                print("Usage: m365 mail-move <message_id> <folder>")
+                sys.exit(1)
+            print(client.move_mail(args[0], args[1]))
+
+        elif cmd == "contacts-list":
+            limit = int(args[0]) if args else 100
+            contacts = client.list_contacts(limit=limit)
+            if not contacts:
+                print("No contacts found.")
+            else:
+                header = (
+                    f"{'First':<15} {'Last':<15} {'Work Email':<30} "
+                    f"{'Home Email':<25} {'Work Phone':<18} {'Home Phone':<15} Mobile"
+                )
+                print(header)
+                print("-" * len(header))
+                for c in contacts:
+                    print(
+                        f"{c['first_name']:<15} {c['last_name']:<15} "
+                        f"{c['work_email']:<30} {c['home_email']:<25} "
+                        f"{c['work_phone']:<18} {c['home_phone']:<15} {c['mobile_phone']}"
+                    )
+
+        elif cmd == "contacts-get":
+            if not args:
+                print("Usage: m365 contacts-get <name>")
+                sys.exit(1)
+            contact = client.get_contact(args[0])
+            if not contact:
+                print(f"No contact found matching '{args[0]}'.")
+            else:
+                _print_json(contact)
+
+        elif cmd == "contacts-create":
+            parser = argparse.ArgumentParser(prog='m365 contacts-create')
+            parser.add_argument('given_name')
+            parser.add_argument('surname')
+            parser.add_argument('email', nargs='?', default=None)
+            parser.add_argument('phone', nargs='?', default=None)
+            parser.add_argument('--home-email', default=None)
+            parser.add_argument('--home-phone', default=None)
+            parser.add_argument('--mobile-phone', default=None)
+            parser.add_argument('--work-street', default=None)
+            parser.add_argument('--work-city', default=None)
+            parser.add_argument('--work-state', default=None)
+            parser.add_argument('--work-zip', default=None)
+            parser.add_argument('--work-country', default=None)
+            parser.add_argument('--home-street', default=None)
+            parser.add_argument('--home-city', default=None)
+            parser.add_argument('--home-state', default=None)
+            parser.add_argument('--home-zip', default=None)
+            parser.add_argument('--home-country', default=None)
+            parser.add_argument('--birthday', default=None)
+            parser.add_argument('--anniversary', default=None)
+            parser.add_argument('--website', default=None)
+            parser.add_argument('--work-website', default=None)
+            parser.add_argument('--spouse', default=None)
+            parser.add_argument('--notes', default=None)
+            pargs = parser.parse_args(args)
+            print(client.create_contact(
+                pargs.given_name, pargs.surname,
+                email=pargs.email, phone=pargs.phone,
+                home_email=pargs.home_email, home_phone=pargs.home_phone,
+                mobile_phone=pargs.mobile_phone,
+                work_street=pargs.work_street, work_city=pargs.work_city,
+                work_state=pargs.work_state, work_zip=pargs.work_zip,
+                work_country=pargs.work_country,
+                home_street=pargs.home_street, home_city=pargs.home_city,
+                home_state=pargs.home_state, home_zip=pargs.home_zip,
+                home_country=pargs.home_country,
+                birthday=pargs.birthday, anniversary=pargs.anniversary,
+                website=pargs.website, work_website=pargs.work_website,
+                spouse=pargs.spouse, notes=pargs.notes,
+            ))
+
+        elif cmd == "contacts-photo-set":
+            if len(args) < 2:
+                print("Usage: m365 contacts-photo-set <contact_id> <photo_path>")
+                sys.exit(1)
+            print(client.set_contact_photo(args[0], args[1]))
+
+        elif cmd == "contacts-photo-delete":
+            if not args:
+                print("Usage: m365 contacts-photo-delete <contact_id>")
+                sys.exit(1)
+            print(client.delete_contact_photo(args[0]))
+
+        elif cmd == "contacts-photo-get":
+            if len(args) < 2:
+                print("Usage: m365 contacts-photo-get <contact_id> <save_path>")
+                sys.exit(1)
+            print(client.get_contact_photo(args[0], args[1]))
+
+        elif cmd == "upload":
+            if len(args) < 2:
+                print("Usage: m365 upload <local_path> <remote_path>")
+                sys.exit(1)
+            print(client.onedrive_upload(args[0], args[1]))
+
+        elif cmd == "download":
+            if len(args) < 2:
+                print("Usage: m365 download <remote_path> <local_path>")
+                sys.exit(1)
+            print(client.onedrive_download(args[0], args[1]))
 
         elif cmd == "todo-list-lists":
             lists = client.todo_list_task_lists()
@@ -566,25 +1054,20 @@ def main():
             print(client.todo_delete_task_list(args[0]))
 
         elif cmd == "todo-list-tasks":
-            import argparse
             parser = argparse.ArgumentParser(prog='m365 todo-list-tasks')
-            parser.add_argument('list_id', help='Task list ID')
-            parser.add_argument('--due-after', default=None,
-                                metavar='YYYY-MM-DD',
-                                help='Only show tasks due on or after this date')
-            parser.add_argument('--due-before', default=None,
-                                metavar='YYYY-MM-DD',
-                                help='Only show tasks due on or before this date')
+            parser.add_argument('list_id')
+            parser.add_argument('--due-after', default=None)
+            parser.add_argument('--due-before', default=None)
             pargs = parser.parse_args(args)
-            tasks = client.todo_list_tasks(pargs.list_id, due_after=pargs.due_after,
+            tasks = client.todo_list_tasks(pargs.list_id,
+                                           due_after=pargs.due_after,
                                            due_before=pargs.due_before)
             _print_tasks(tasks)
 
         elif cmd == "todo-all-tasks":
-            import argparse
             parser = argparse.ArgumentParser(prog='m365 todo-all-tasks')
-            parser.add_argument('--due-after', default=None, metavar='YYYY-MM-DD')
-            parser.add_argument('--due-before', default=None, metavar='YYYY-MM-DD')
+            parser.add_argument('--due-after', default=None)
+            parser.add_argument('--due-before', default=None)
             pargs = parser.parse_args(args)
             tasks = client.todo_get_all_tasks(due_after=pargs.due_after,
                                               due_before=pargs.due_before)
@@ -595,41 +1078,32 @@ def main():
             _print_tasks(tasks, show_list=True)
 
         elif cmd == "todo-create-task":
-            import argparse
             parser = argparse.ArgumentParser(prog='m365 todo-create-task')
-            parser.add_argument('list_id', help='Task list ID')
-            parser.add_argument('title', help='Task title')
-            parser.add_argument('--note', default=None, help='Task note / description')
-            parser.add_argument('--due', default=None,
-                                metavar='YYYY-MM-DDTHH:MM:SS',
-                                help='Due date (ISO 8601)')
-            parser.add_argument('--reminder', default=None,
-                                metavar='YYYY-MM-DDTHH:MM:SS',
-                                help='Reminder datetime (ISO 8601)')
+            parser.add_argument('list_id')
+            parser.add_argument('title')
+            parser.add_argument('--note', default=None)
+            parser.add_argument('--due', default=None)
+            parser.add_argument('--reminder', default=None)
             pargs = parser.parse_args(args)
             print(client.todo_create_task(
                 pargs.list_id, pargs.title,
-                note=pargs.note,
-                due_date=pargs.due,
+                note=pargs.note, due_date=pargs.due,
                 reminder_datetime=pargs.reminder,
             ))
 
         elif cmd == "todo-update-task":
-            import argparse
             parser = argparse.ArgumentParser(prog='m365 todo-update-task')
-            parser.add_argument('list_id', help='Task list ID')
-            parser.add_argument('task_id', help='Task ID')
+            parser.add_argument('list_id')
+            parser.add_argument('task_id')
             parser.add_argument('--title', default=None)
             parser.add_argument('--note', default=None)
-            parser.add_argument('--due', default=None, metavar='YYYY-MM-DDTHH:MM:SS')
-            parser.add_argument('--reminder', default=None, metavar='YYYY-MM-DDTHH:MM:SS')
+            parser.add_argument('--due', default=None)
+            parser.add_argument('--reminder', default=None)
             pargs = parser.parse_args(args)
             print(client.todo_update_task(
                 pargs.list_id, pargs.task_id,
-                title=pargs.title,
-                note=pargs.note,
-                due_date=pargs.due,
-                reminder_datetime=pargs.reminder,
+                title=pargs.title, note=pargs.note,
+                due_date=pargs.due, reminder_datetime=pargs.reminder,
             ))
 
         elif cmd == "todo-complete-task":
@@ -667,25 +1141,6 @@ def main():
     except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
-
-
-def _print_tasks(tasks, show_list=False):
-    """Pretty-print a list of task dicts."""
-    if not tasks:
-        print("No tasks found.")
-        return
-    for t in tasks:
-        done = "✓" if t.get('is_done') else "○"
-        due = f" (due: {t['due'][:10]})" if t.get('due') else ""
-        list_info = f" [{t.get('list_name', '')}]" if show_list else ""
-        print(f"{done} {t['title']}{due}{list_info}")
-        print(f"  ID: {t['id']}")
-        if t.get('note'):
-            preview = t['note'].replace('\n', ' ')[:100]
-            print(f"  Note: {preview}")
-        for step in t.get('steps', []):
-            s_done = "✓" if step['is_done'] else "○"
-            print(f"    {s_done} {step['title']}  (step ID: {step['id']})")
 
 
 if __name__ == "__main__":

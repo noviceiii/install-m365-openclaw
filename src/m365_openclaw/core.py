@@ -244,22 +244,168 @@ class M365Client:
         recipients = to_address if isinstance(to_address, list) else [to_address]
         return f"Email sent to {', '.join(recipients)}"
 
-    def list_mail(self, limit=20):
+    def list_mail(self, limit=20, folder='inbox', unread_only=False, sort='new-old',
+                  search_by_email=None, search_by_subject=None, search=None,
+                  count_only=False):
+        well_known = {
+            'inbox': 'inbox',
+            'sent': 'sentitems',
+            'drafts': 'drafts',
+            'deleted': 'deleteditems',
+            'archive': 'archive',
+            'junk': 'junkemail',
+        }
+        folder_key = well_known.get((folder or 'inbox').lower(), None)
+        if folder_key:
+            msg_url = f"{self._base_url()}/mailFolders/{folder_key}/messages"
+        else:
+            folders_data = self._graph_get(
+                f"{self._base_url()}/mailFolders",
+                params={'$filter': f"displayName eq '{folder}'"},
+            )
+            if folders_data.get('value'):
+                fid = folders_data['value'][0]['id']
+                msg_url = f"{self._base_url()}/mailFolders/{fid}/messages"
+            else:
+                msg_url = f"{self._base_url()}/mailFolders/inbox/messages"
+
+        if count_only:
+            try:
+                count_headers = self._graph_headers(content_type=None)
+                count_headers['ConsistencyLevel'] = 'eventual'
+                resp = requests.get(
+                    msg_url + '/$count', headers=count_headers, timeout=30
+                )
+                resp.raise_for_status()
+                return {'count': int(resp.text)}
+            except Exception as exc:
+                self._raise_if_mail_403(exc)
+                raise
+
+        params = {
+            '$top': min(int(limit), 500),
+            '$select': 'id,subject,from,receivedDateTime,isRead',
+        }
+        if search:
+            params['$search'] = f'"{search}"'
+        else:
+            params['$orderby'] = (
+                'receivedDateTime desc' if sort != 'old-new' else 'receivedDateTime asc'
+            )
+            filters = []
+            if unread_only:
+                filters.append('isRead eq false')
+            if search_by_email:
+                filters.append(f"from/emailAddress/address eq '{search_by_email}'")
+            if search_by_subject:
+                filters.append(f"contains(subject,'{search_by_subject}')")
+            if filters:
+                params['$filter'] = ' and '.join(filters)
+
         try:
-            messages = self.account.mailbox().inbox_folder().get_messages(limit=limit)
+            data = self._graph_get(msg_url, params=params)
         except Exception as exc:
             self._raise_if_mail_403(exc)
             raise
         result = []
-        for msg in messages:
+        for msg in data.get('value', []):
+            from_addr = msg.get('from', {}).get('emailAddress', {})
             result.append({
-                'id': msg.object_id,
-                'subject': msg.subject or '(no subject)',
-                'from': str(msg.sender),
-                'date': msg.received.isoformat() if msg.received else None,
-                'is_read': msg.is_read,
+                'id': msg.get('id', ''),
+                'subject': msg.get('subject', '(no subject)'),
+                'from': f"{from_addr.get('name', '')} <{from_addr.get('address', '')}>",
+                'from_address': from_addr.get('address', ''),
+                'date': msg.get('receivedDateTime', ''),
+                'is_read': msg.get('isRead', False),
             })
         return result
+
+    def read_mail(self, message_id, mark_as_read=False, mark_as_unread=False,
+                  full_body=False, headers_only=False):
+        select_fields = (
+            'id,subject,from,toRecipients,ccRecipients,'
+            'receivedDateTime,sentDateTime,importance,sensitivity,'
+            'isRead,hasAttachments,body'
+        )
+        url = f"{self._base_url()}/messages/{message_id}?$select={select_fields}"
+        try:
+            msg = self._graph_get(url)
+        except Exception as exc:
+            self._raise_if_mail_403(exc)
+            raise
+
+        body_content = msg.get('body', {}).get('content', '')
+        if headers_only:
+            body_content = None
+        elif not full_body:
+            body_text = re.sub(r'<[^>]+>', ' ', body_content)
+            body_text = ' '.join(body_text.split())
+            body_content = body_text[:200] if len(body_text) > 200 else body_text
+
+        result = {
+            'id': msg.get('id', ''),
+            'subject': msg.get('subject', '(no subject)'),
+            'from': msg.get('from', {}).get('emailAddress', {}),
+            'to': [r.get('emailAddress', {}) for r in msg.get('toRecipients', [])],
+            'cc': [r.get('emailAddress', {}) for r in msg.get('ccRecipients', [])],
+            'date_received': msg.get('receivedDateTime', ''),
+            'date_sent': msg.get('sentDateTime', ''),
+            'importance': msg.get('importance', ''),
+            'sensitivity': msg.get('sensitivity', ''),
+            'is_read': msg.get('isRead', False),
+            'has_attachments': msg.get('hasAttachments', False),
+        }
+        if body_content is not None:
+            result['body'] = body_content
+
+        if mark_as_read or mark_as_unread:
+            patch_url = f"{self._base_url()}/messages/{message_id}"
+            is_read = True if mark_as_read else False
+            try:
+                self._graph_patch(patch_url, {'isRead': is_read})
+            except Exception as exc:
+                self._raise_if_mail_403(exc)
+                raise
+            result['is_read'] = is_read
+
+        return result
+
+    def create_mail_folder(self, folder_name):
+        url = f"{self._base_url()}/mailFolders"
+        try:
+            result = self._graph_post(url, {'displayName': folder_name})
+        except Exception as exc:
+            self._raise_if_mail_403(exc)
+            raise
+        return f"Mail folder '{folder_name}' created (ID: {result.get('id', '')})"
+
+    def delete_mail_folder(self, folder_id):
+        well_known = {
+            'inbox': 'inbox', 'sent': 'sentitems', 'drafts': 'drafts',
+            'deleted': 'deleteditems', 'archive': 'archive', 'junk': 'junkemail',
+        }
+        fid = well_known.get(folder_id.lower(), folder_id)
+        url = f"{self._base_url()}/mailFolders/{fid}"
+        try:
+            self._graph_delete(url)
+        except Exception as exc:
+            self._raise_if_mail_403(exc)
+            raise
+        return f"Mail folder '{folder_id}' deleted"
+
+    def rename_mail_folder(self, folder_id, new_name):
+        well_known = {
+            'inbox': 'inbox', 'sent': 'sentitems', 'drafts': 'drafts',
+            'deleted': 'deleteditems', 'archive': 'archive', 'junk': 'junkemail',
+        }
+        fid = well_known.get(folder_id.lower(), folder_id)
+        url = f"{self._base_url()}/mailFolders/{fid}"
+        try:
+            self._graph_patch(url, {'displayName': new_name})
+        except Exception as exc:
+            self._raise_if_mail_403(exc)
+            raise
+        return f"Mail folder renamed to '{new_name}'"
 
     def search_mail(self, subject_query, limit=10):
         url = (
@@ -441,6 +587,46 @@ class M365Client:
         event_id = result.get('id', '')
         return f"Event '{subject}' created (ID: {event_id})"
 
+    def get_calendar_event(self, event_id):
+        url = f"{self._base_url()}/calendar/events/{event_id}"
+        result = self._graph_get(url)
+        attendees = []
+        for a in result.get('attendees', []):
+            attendees.append({
+                'name': a.get('emailAddress', {}).get('name', ''),
+                'email': a.get('emailAddress', {}).get('address', ''),
+                'type': a.get('type', ''),
+                'status': a.get('status', {}).get('response', ''),
+            })
+        return {
+            'id': result.get('id', ''),
+            'subject': result.get('subject', '(no subject)'),
+            'start': result.get('start', {}).get('dateTime', ''),
+            'end': result.get('end', {}).get('dateTime', ''),
+            'location': result.get('location', {}).get('displayName', ''),
+            'body': result.get('body', {}).get('content', ''),
+            'sensitivity': result.get('sensitivity', ''),
+            'is_organizer': result.get('isOrganizer', False),
+            'is_cancelled': result.get('isCancelled', False),
+            'attendees': attendees,
+        }
+
+    def respond_calendar_event(self, event_id, response):
+        """Response must be one of: accept, tentativelyAccept, decline."""
+        url = f"{self._base_url()}/calendar/events/{event_id}/{response}"
+        self._graph_post(url, {'sendResponse': True})
+        return f"Response '{response}' sent for event {event_id}"
+
+    def cancel_calendar_event(self, event_id, comment=''):
+        url = f"{self._base_url()}/calendar/events/{event_id}/cancel"
+        self._graph_post(url, {'comment': comment})
+        return f"Event {event_id} cancelled"
+
+    def delete_calendar_event(self, event_id):
+        url = f"{self._base_url()}/calendar/events/{event_id}"
+        self._graph_delete(url)
+        return f"Event {event_id} deleted"
+
     # ── Contacts ──────────────────────────────────────────────────────────────
 
     def list_contacts(self, limit=100):
@@ -585,7 +771,9 @@ class M365Client:
         with open(photo_path, 'rb') as fh:
             photo_bytes = fh.read()
         url = f"{self._base_url()}/contacts/{contact_id}/photo/$value"
-        self._graph_put(url, photo_bytes, content_type='image/jpeg')
+        ext = Path(photo_path).suffix.lower()
+        content_type = 'image/jpeg' if ext in ('.jpg', '.jpeg') else 'image/png'
+        self._graph_put(url, photo_bytes, content_type=content_type)
         return f"Photo set for contact {contact_id}"
 
     def delete_contact_photo(self, contact_id):
@@ -594,27 +782,111 @@ class M365Client:
         return f"Photo deleted for contact {contact_id}"
 
     def get_contact_photo(self, contact_id, save_path):
-        import requests as req
         url = f"{self._base_url()}/contacts/{contact_id}/photo/$value"
-        resp = req.get(url, headers=self._graph_headers(content_type=None), timeout=30)
+        resp = requests.get(url, headers=self._graph_headers(content_type=None), timeout=30)
         resp.raise_for_status()
         with open(save_path, 'wb') as fh:
             fh.write(resp.content)
         return f"Photo saved to {save_path}"
 
-    def update_contact_photo(self, contact_id, photo_path):
-        url = f"{GRAPH_BASE}/users/{self.user}/contacts/{contact_id}/photo/$value"
-        ext = Path(photo_path).suffix.lower()
-        content_type = "image/jpeg" if ext in ('.jpg', '.jpeg') else "image/png"
-        with open(photo_path, 'rb') as f:
-            data = f.read()
-        self._graph_put(url, data, content_type)
-        return f"Photo updated for contact {contact_id}"
+    def get_contact_by_id(self, contact_id):
+        url = f"{self._base_url()}/contacts/{contact_id}"
+        try:
+            c = self._graph_get(url)
+        except Exception:
+            return None
+        return {
+            'id': c.get('id', ''),
+            'display_name': c.get('displayName', ''),
+            'first_name': c.get('givenName', ''),
+            'last_name': c.get('surname', ''),
+            'company': c.get('companyName', ''),
+            'job_title': c.get('jobTitle', ''),
+            'emails': c.get('emailAddresses', []),
+            'business_phones': c.get('businessPhones', []),
+            'home_phones': c.get('homePhones', []),
+            'mobile_phone': c.get('mobilePhone', ''),
+            'business_address': c.get('businessAddress', {}),
+            'home_address': c.get('homeAddress', {}),
+            'birthday': c.get('birthday', ''),
+            'anniversary': c.get('anniversary', ''),
+            'spouse_name': c.get('spouseName', ''),
+            'websites': c.get('websites', []),
+            'personal_notes': c.get('personalNotes', ''),
+        }
 
-    def delete_contact_photo(self, contact_id):
-        url = f"{GRAPH_BASE}/users/{self.user}/contacts/{contact_id}/photo/$value"
+    def update_contact(self, contact_id, given_name=None, surname=None,
+                       email_business=None, email_personal=None,
+                       phone_mobile=None, phone_business=None, phone_home=None,
+                       birthday=None, notes=None, company=None, job_title=None):
+        data = {}
+        if given_name is not None:
+            data['givenName'] = given_name
+        if surname is not None:
+            data['surname'] = surname
+        if company is not None:
+            data['companyName'] = company
+        if job_title is not None:
+            data['jobTitle'] = job_title
+        if phone_mobile is not None:
+            data['mobilePhone'] = phone_mobile
+        if phone_business is not None:
+            data['businessPhones'] = [phone_business]
+        if phone_home is not None:
+            data['homePhones'] = [phone_home]
+        if birthday is not None:
+            data['birthday'] = birthday
+        if notes is not None:
+            data['personalNotes'] = notes
+
+        if email_business is not None or email_personal is not None:
+            current = self._graph_get(
+                f"{self._base_url()}/contacts/{contact_id}?$select=emailAddresses"
+            )
+            emails = list(current.get('emailAddresses', []))
+            if email_business is not None:
+                found = False
+                for e in emails:
+                    if e.get('name', '').lower() in ('work', 'geschäft', 'business'):
+                        e['address'] = email_business
+                        found = True
+                        break
+                if not found:
+                    emails.append({'name': 'Work', 'address': email_business})
+            if email_personal is not None:
+                found = False
+                for e in emails:
+                    if e.get('name', '').lower() in ('home', 'personal', 'privat'):
+                        e['address'] = email_personal
+                        found = True
+                        break
+                if not found:
+                    emails.append({'name': 'Home', 'address': email_personal})
+            data['emailAddresses'] = emails
+
+        if not data:
+            return "No fields to update."
+        url = f"{self._base_url()}/contacts/{contact_id}"
+        self._graph_patch(url, data)
+        return f"Contact {contact_id} updated"
+
+    def list_contact_folders(self):
+        url = f"{self._base_url()}/contactFolders"
+        data = self._graph_get(url)
+        return [
+            {'id': f.get('id', ''), 'name': f.get('displayName', '')}
+            for f in data.get('value', [])
+        ]
+
+    def create_contact_folder(self, name):
+        url = f"{self._base_url()}/contactFolders"
+        result = self._graph_post(url, {'displayName': name})
+        return f"Contact folder '{name}' created (ID: {result.get('id', '')})"
+
+    def delete_contact_folder(self, folder_id):
+        url = f"{self._base_url()}/contactFolders/{folder_id}"
         self._graph_delete(url)
-        return f"Photo deleted for contact {contact_id}"
+        return f"Contact folder {folder_id} deleted"
 
     # ── OneDrive ─────────────────────────────────────────────────────────────
 
@@ -651,6 +923,87 @@ class M365Client:
         local = Path(local_path)
         item.download(to_path=str(local.parent), name=local.name)
         return f"Downloaded to {local_path}"
+
+    def onedrive_delete(self, remote_path):
+        drive = self._get_drive()
+        item = drive.get_item_by_path(remote_path)
+        item.delete()
+        return f"Deleted {remote_path}"
+
+    def onedrive_move(self, old_path, new_path):
+        """Move or rename a file/folder on OneDrive."""
+        drive = self._get_drive()
+        item = drive.get_item_by_path(old_path)
+        drive_id = drive.object_id
+        item_id = item.object_id
+        new = Path(new_path)
+        new_parent = str(new.parent)
+        if new_parent in ('/', '.', ''):
+            parent_item = drive.get_root_folder()
+        else:
+            parent_item = drive.get_item_by_path(new_parent)
+        parent_id = parent_item.object_id
+        url = f"{GRAPH_BASE}/drives/{drive_id}/items/{item_id}"
+        self._graph_patch(url, {
+            'name': new.name,
+            'parentReference': {'id': parent_id},
+        })
+        return f"Moved {old_path} to {new_path}"
+
+    def onedrive_share(self, remote_path, anyone=False, edit=False):
+        drive = self._get_drive()
+        item = drive.get_item_by_path(remote_path)
+        drive_id = drive.object_id
+        item_id = item.object_id
+        url = f"{GRAPH_BASE}/drives/{drive_id}/items/{item_id}/createLink"
+        data = {
+            'type': 'edit' if edit else 'view',
+            'scope': 'anonymous' if anyone else 'organization',
+        }
+        result = self._graph_post(url, data)
+        link = result.get('link', {}).get('webUrl', '')
+        return f"Share link: {link}"
+
+    # ── User ──────────────────────────────────────────────────────────────────
+
+    def get_user(self):
+        url = f"{self._base_url()}"
+        data = self._graph_get(url)
+        return {
+            'id': data.get('id', ''),
+            'display_name': data.get('displayName', ''),
+            'given_name': data.get('givenName', ''),
+            'surname': data.get('surname', ''),
+            'email': data.get('mail', '') or data.get('userPrincipalName', ''),
+            'job_title': data.get('jobTitle', ''),
+            'department': data.get('department', ''),
+            'mobile_phone': data.get('mobilePhone', ''),
+            'office_location': data.get('officeLocation', ''),
+        }
+
+    def update_user(self, display_name=None, given_name=None, surname=None,
+                    mobile_phone=None, job_title=None, department=None,
+                    office_location=None):
+        data = {}
+        if display_name is not None:
+            data['displayName'] = display_name
+        if given_name is not None:
+            data['givenName'] = given_name
+        if surname is not None:
+            data['surname'] = surname
+        if mobile_phone is not None:
+            data['mobilePhone'] = mobile_phone
+        if job_title is not None:
+            data['jobTitle'] = job_title
+        if department is not None:
+            data['department'] = department
+        if office_location is not None:
+            data['officeLocation'] = office_location
+        if not data:
+            return "No fields to update."
+        url = f"{self._base_url()}"
+        self._graph_patch(url, data)
+        return "User profile updated"
 
     # ── OneNote ───────────────────────────────────────────────────────────────
 
@@ -976,6 +1329,45 @@ class M365Client:
             f"Task moved from list {from_list_id} to {to_list_id} "
             f"(new ID: {new_task_id})"
         )
+
+
+    def todo_get_task(self, list_id, task_id):
+        url = (
+            f"{self._base_url()}/todo/lists/{list_id}"
+            f"/tasks/{task_id}?$expand=checklistItems"
+        )
+        try:
+            data = self._graph_get(url)
+        except Exception as exc:
+            self._raise_if_todo_401(exc)
+            raise
+        tasks = self._format_tasks([data])
+        return tasks[0] if tasks else None
+
+    def todo_delete_task(self, list_id, task_id):
+        url = f"{self._base_url()}/todo/lists/{list_id}/tasks/{task_id}"
+        try:
+            self._graph_delete(url)
+        except Exception as exc:
+            self._raise_if_todo_401(exc)
+            raise
+        return f"Task {task_id} deleted"
+
+    def todo_get_default_list_id(self):
+        """Return the ID of the default task list using wellKnownListName, or the first list."""
+        url = f"{self._base_url()}/todo/lists?$select=id,displayName,wellKnownListName"
+        try:
+            data = self._graph_get(url)
+        except Exception as exc:
+            self._raise_if_todo_401(exc)
+            raise
+        lists = data.get('value', [])
+        if not lists:
+            return None
+        for lst in lists:
+            if lst.get('wellKnownListName') == 'tasks':
+                return lst.get('id', '')
+        return lists[0].get('id', '')
 
 
 if __name__ == "__main__":

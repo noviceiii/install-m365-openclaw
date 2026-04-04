@@ -1,16 +1,19 @@
 """
-core.py – Microsoft 365 client for OpenClaw agents (v0.3.1).
+core.py – Microsoft 365 client for OpenClaw agents (v0.5.0).
 
 Supports: Mail, Calendar, Contacts, OneDrive, OneNote, Excel, Word, PowerPoint,
-          Microsoft ToDo tasks.
-Uses client-credentials (daemon/application) flow via the O365 library + MSAL.
+          Microsoft ToDo tasks, Teams Chats, Online Meetings, Bookings, Sites.
+Uses delegated (device code) flow via MSAL with SerializableTokenCache for
+headless operation after initial sign-in.
 
-Important: When using application permissions (client_credentials flow), all
-Graph API calls must target a specific user. Set M365_USER_EMAIL in .env so
-that main_resource resolves /me/ to /users/<email>/ automatically.
+Authentication: On first run the user opens https://microsoft.com/devicelogin
+on any device and enters the displayed code. The app then receives an access
+token plus a refresh token. All subsequent runs are fully headless – MSAL
+silently exchanges the refresh token for a fresh access token as needed.
 """
 
 import base64
+import json
 import os
 import re
 import sys
@@ -21,12 +24,34 @@ from pathlib import Path
 import msal
 import requests
 from dotenv import load_dotenv
-from O365 import Account
-from O365.utils import FileSystemTokenBackend
 
 load_dotenv()
 
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
+GRAPH_ME = f"{GRAPH_BASE}/me"
+
+# Delegated scopes required by this skill
+DELEGATED_SCOPES = [
+    "User.Read",
+    "openid",
+    "profile",
+    "offline_access",
+    "Files.ReadWrite",
+    "Mail.ReadWrite",
+    "Mail.Send",
+    "Calendars.ReadWrite",
+    "Contacts.ReadWrite",
+    "MailboxFolder.ReadWrite",
+    "Tasks.ReadWrite",
+    "Notes.ReadWrite",
+    "Sites.ReadWrite.All",
+    "Bookings.Manage.All",
+    "Bookings.ReadWrite.All",
+    "BookingsAppointment.ReadWrite.All",
+    "Chat.Create",
+    "Chat.ReadWrite",
+    "OnlineMeetings.ReadWrite",
+]
 
 
 def _parse_excel_range(range_str):
@@ -48,82 +73,92 @@ def _parse_excel_range(range_str):
 
 
 class M365Client:
-    def __init__(self):
+    def __init__(self, force_reauth=False):
         self.tenant_id = os.getenv("TENANT_ID")
         self.client_id = os.getenv("CLIENT_ID")
-        self.client_secret = os.getenv("CLIENT_SECRET")
         self.token_cache_path = os.getenv("TOKEN_CACHE_PATH")
-        self.user = os.getenv("M365_USER_EMAIL") or "me"
 
-        if not all([self.tenant_id, self.client_id, self.client_secret]):
+        if not all([self.tenant_id, self.client_id]):
             raise EnvironmentError(
                 "Missing required credentials. "
                 "Edit ~/.openclaw/skills/m365-graph/.env and set "
-                "TENANT_ID, CLIENT_ID, and CLIENT_SECRET."
+                "TENANT_ID and CLIENT_ID."
             )
 
-        credentials = (self.client_id, self.client_secret)
-        token_backend = FileSystemTokenBackend(
-            token_path=Path(self.token_cache_path)
-        )
+        # Set up persistent token cache
+        self._token_cache = msal.SerializableTokenCache()
+        cache_file = Path(self.token_cache_path) if self.token_cache_path else None
+        if not force_reauth and cache_file and cache_file.exists():
+            self._token_cache.deserialize(cache_file.read_text(encoding="utf-8"))
 
-        self.account = Account(
-            credentials=credentials,
-            auth_flow_type='credentials',
-            tenant_id=self.tenant_id,
-            token_backend=token_backend,
-            main_resource=self.user,
-        )
-
-        # MSAL app used for direct Graph API calls (todo-*, etc.)
-        # Using MSAL directly avoids reading O365 internal connection state,
-        # which is unreliable and can corrupt the O365 session when retried.
-        self._msal_app = msal.ConfidentialClientApplication(
+        self._msal_app = msal.PublicClientApplication(
             self.client_id,
             authority=f"https://login.microsoftonline.com/{self.tenant_id}",
-            client_credential=self.client_secret,
+            token_cache=self._token_cache,
         )
 
-        if not self.account.is_authenticated:
-            print("Authenticating with Microsoft 365...", file=sys.stderr)
-            self.account.authenticate(
-                scopes=['https://graph.microsoft.com/.default']
+        # Ensure we have a valid token (silently or via device code)
+        self._ensure_authenticated(force_reauth=force_reauth)
+
+    # ── authentication helpers ────────────────────────────────────────────────
+
+    def _save_cache(self):
+        if self.token_cache_path and self._token_cache.has_state_changed:
+            cache_file = Path(self.token_cache_path)
+            cache_file.parent.mkdir(parents=True, exist_ok=True)
+            cache_file.write_text(
+                self._token_cache.serialize(), encoding="utf-8"
             )
 
-    # ── internal helpers ──────────────────────────────────────────────────────
+    def _ensure_authenticated(self, force_reauth=False):
+        """Acquire a token silently if possible; fall back to device-code flow."""
+        if not force_reauth:
+            accounts = self._msal_app.get_accounts()
+            if accounts:
+                result = self._msal_app.acquire_token_silent(
+                    DELEGATED_SCOPES, account=accounts[0]
+                )
+                if result and "access_token" in result:
+                    self._save_cache()
+                    return
 
-    def _get_drive(self):
-        storage = self.account.storage()
-        return storage.get_default_drive(request_drive=True)
+        # Interactive device-code flow
+        flow = self._msal_app.initiate_device_flow(scopes=DELEGATED_SCOPES)
+        if "user_code" not in flow:
+            raise RuntimeError(
+                f"Failed to initiate device-code flow: {flow.get('error')} – "
+                f"{flow.get('error_description', '')}"
+            )
+
+        print("\n" + "=" * 70, file=sys.stderr)
+        print(flow["message"], file=sys.stderr)
+        print("=" * 70 + "\n", file=sys.stderr)
+
+        result = self._msal_app.acquire_token_by_device_flow(flow)
+        if "access_token" not in result:
+            raise RuntimeError(
+                f"Authentication failed: {result.get('error')} – "
+                f"{result.get('error_description', '')}"
+            )
+        self._save_cache()
 
     def _access_token(self):
-        """Return a valid access token using MSAL client credentials flow.
+        """Return a valid access token (silent refresh; raises if impossible)."""
+        accounts = self._msal_app.get_accounts()
+        if accounts:
+            result = self._msal_app.acquire_token_silent(
+                DELEGATED_SCOPES, account=accounts[0]
+            )
+            if result and "access_token" in result:
+                self._save_cache()
+                return result["access_token"]
 
-        Uses self._msal_app (ConfidentialClientApplication) directly instead
-        of reading from the O365 connection's internal state.  The O365
-        library's own session (account.schedule(), etc.) is kept intact
-        because we never call account.authenticate() here again.
-        """
-        scope = ["https://graph.microsoft.com/.default"]
-
-        # Try a silently cached token first (avoids a round-trip to MSFT)
-        result = self._msal_app.acquire_token_silent(scope, account=None)
-        if result and "access_token" in result:
-            return result["access_token"]
-
-        # Fetch a fresh token from Azure AD
-        print("Refreshing Microsoft 365 token...", file=sys.stderr)
-        result = self._msal_app.acquire_token_for_client(scopes=scope)
-        if result and "access_token" in result:
-            return result["access_token"]
-
-        error = result.get("error", "unknown") if result else "no response"
-        desc = result.get("error_description", "") if result else ""
         raise RuntimeError(
-            f"Could not retrieve a valid access token.\n"
-            f"Azure AD error: {error} – {desc}\n"
-            "Please verify TENANT_ID, CLIENT_ID, and CLIENT_SECRET in .env"
+            "Token expired and could not be refreshed silently.\n"
+            "Run:  m365 auth-login  to re-authenticate via device code."
         )
+
+    # ── low-level HTTP helpers ────────────────────────────────────────────────
 
     def _graph_headers(self, content_type='application/json'):
         headers = {'Authorization': f'Bearer {self._access_token()}'}
@@ -162,66 +197,24 @@ class M365Client:
         return resp.json() if resp.content else {}
 
     def _base_url(self):
-        return f"https://graph.microsoft.com/v1.0/users/{self.user}"
+        """Base URL for /me/… delegated-access calls."""
+        return GRAPH_ME
 
     def _todo_base_url(self):
-        """Return the Graph base URL for Microsoft To Do (app-only / client credentials).
+        """Base URL for Microsoft To Do (same as _base_url in delegated mode)."""
+        return GRAPH_ME
 
-        To Do requires an explicit user-id in the path.  The /me endpoint is only
-        valid for delegated (user) tokens and always returns 401 in app-only context.
-        Set M365_USER_EMAIL in the .env file to the target user's UPN or Azure AD
-        Object ID so that this URL resolves to /users/{user-id}/todo/…
-        """
-        if self.user == "me":
-            raise ValueError(
-                "Microsoft To Do requires an explicit user identity in app-only "
-                "(client credentials) mode.\n"
-                "The /me endpoint is not allowed for application tokens and always "
-                "returns HTTP 401 Unauthorized.\n"
-                "Set M365_USER_EMAIL=<UPN or Azure AD Object ID> in your .env file "
-                "and restart the application."
-            )
-        return f"{GRAPH_BASE}/users/{self.user}"
-
-    # ── Mail – error helper ───────────────────────────────────────────────────
+    # ── error helpers ─────────────────────────────────────────────────────────
 
     @staticmethod
     def _raise_if_mail_403(exc):
-        try:
-            import requests
-            if isinstance(exc, requests.exceptions.HTTPError) and exc.response.status_code == 403:
-                raise PermissionError(
-                    "Mail access denied (HTTP 403).\n"
-                    "Make sure RBAC for Applications is configured via setup-exchange-policy.ps1\n"
-                    "and admin consent is granted in Entra ID."
-                ) from exc
-        except ImportError:
-            pass
-
-    # ── Todo – error helper ───────────────────────────────────────────────────
-
-    @staticmethod
-    def _raise_if_todo_401(exc, *, endpoint: str = "", user_id: str = ""):
-        try:
-            import requests
-            if isinstance(exc, requests.exceptions.HTTPError) and exc.response.status_code == 401:
-                endpoint_info = f"\n  Endpoint: {endpoint}" if endpoint else ""
-                user_info = f"\n  User-ID:  {user_id}" if user_id else ""
-                raise PermissionError(
-                    "Microsoft To Do access denied (HTTP 401 Unauthorized).\n"
-                    "Auth mode: app-only (client credentials)."
-                    f"{endpoint_info}"
-                    f"{user_info}\n"
-                    "Checklist:\n"
-                    "  1. The application permission 'Tasks.ReadWrite.All' must be added\n"
-                    "     in Entra ID → App registrations → API permissions with admin consent.\n"
-                    "  2. The /me endpoint is NOT allowed in app-only context.\n"
-                    "     All To Do calls must use /users/{user-id}/todo/… — never /me/todo/…\n"
-                    "  3. Set M365_USER_EMAIL=<UPN or Azure AD Object ID> in your .env file\n"
-                    "     so that requests are routed through /users/{user-id}."
-                ) from exc
-        except ImportError:
-            pass
+        if (isinstance(exc, requests.exceptions.HTTPError)
+                and exc.response.status_code == 403):
+            raise PermissionError(
+                "Mail access denied (HTTP 403).\n"
+                "Make sure the delegated permission 'Mail.ReadWrite' is granted\n"
+                "in Entra ID → App registrations → API permissions."
+            ) from exc
 
     # ── Mail ──────────────────────────────────────────────────────────────────
 
@@ -551,23 +544,26 @@ class M365Client:
     # ── Calendar ──────────────────────────────────────────────────────────────
 
     def get_calendar_events(self, days=7):
-        schedule = self.account.schedule()
-        calendar = schedule.get_default_calendar()
-        events = calendar.get_events(include_recurring=False, limit=100)
         now_utc = datetime.now(timezone.utc)
         cutoff = now_utc + timedelta(days=days)
+        url = f"{GRAPH_ME}/calendarView"
+        params = {
+            'startDateTime': now_utc.strftime('%Y-%m-%dT%H:%M:%SZ'),
+            'endDateTime': cutoff.strftime('%Y-%m-%dT%H:%M:%SZ'),
+            '$select': 'id,subject,start,end,location',
+            '$orderby': 'start/dateTime asc',
+            '$top': 100,
+        }
+        data = self._graph_get(url, params=params)
         upcoming = []
-        for event in events:
-            start = event.start
-            if start and start.tzinfo is None:
-                start = start.replace(tzinfo=timezone.utc)
-            if start and now_utc <= start <= cutoff:
-                upcoming.append({
-                    'subject': event.subject or '(no subject)',
-                    'start': start.isoformat(),
-                    'end': event.end.isoformat() if event.end else None,
-                    'location': str(event.location) if event.location else None,
-                })
+        for event in data.get('value', []):
+            upcoming.append({
+                'id': event.get('id', ''),
+                'subject': event.get('subject', '(no subject)'),
+                'start': event.get('start', {}).get('dateTime', ''),
+                'end': event.get('end', {}).get('dateTime', ''),
+                'location': event.get('location', {}).get('displayName', ''),
+            })
         return upcoming
 
     def create_calendar_event(self, subject, start_iso, end_iso, body="", location="",
@@ -919,59 +915,61 @@ class M365Client:
     # ── OneDrive ─────────────────────────────────────────────────────────────
 
     def onedrive_list(self, folder_path="/"):
-        drive = self._get_drive()
         if folder_path in ("/", ""):
-            folder = drive.get_root_folder()
+            url = f"{GRAPH_ME}/drive/root/children"
         else:
-            folder = drive.get_item_by_path(folder_path)
+            encoded = folder_path.rstrip("/")
+            url = f"{GRAPH_ME}/drive/root:{encoded}:/children"
+        data = self._graph_get(url, params={'$top': 200})
         result = []
-        for item in folder.get_items():
+        for item in data.get('value', []):
             result.append({
-                'name': item.name,
-                'type': 'folder' if item.is_folder else 'file',
-                'size': item.size if not item.is_folder else None,
-                'modified': item.modified.isoformat() if item.modified else None,
+                'name': item.get('name', ''),
+                'type': 'folder' if 'folder' in item else 'file',
+                'size': item.get('size'),
+                'modified': item.get('lastModifiedDateTime'),
             })
         return result
 
     def onedrive_upload(self, local_path, remote_path):
-        drive = self._get_drive()
-        remote = Path(remote_path)
-        parent_str = str(remote.parent)
-        if parent_str in ("/", "."):
-            folder = drive.get_root_folder()
-        else:
-            folder = drive.get_item_by_path(parent_str)
-        uploaded = folder.upload_file(item=local_path, item_name=remote.name)
-        return f"Uploaded to {remote_path}" if uploaded else "Upload failed"
+        with open(local_path, 'rb') as fh:
+            content = fh.read()
+        url = f"{GRAPH_ME}/drive/root:{remote_path}:/content"
+        resp = requests.put(
+            url,
+            headers=self._graph_headers(content_type='application/octet-stream'),
+            data=content,
+            timeout=120,
+        )
+        resp.raise_for_status()
+        return f"Uploaded to {remote_path}"
 
     def onedrive_download(self, remote_path, local_path):
-        drive = self._get_drive()
-        item = drive.get_item_by_path(remote_path)
-        local = Path(local_path)
-        item.download(to_path=str(local.parent), name=local.name)
+        url = f"{GRAPH_ME}/drive/root:{remote_path}:/content"
+        resp = requests.get(
+            url, headers=self._graph_headers(content_type=None), timeout=120
+        )
+        resp.raise_for_status()
+        with open(local_path, 'wb') as fh:
+            fh.write(resp.content)
         return f"Downloaded to {local_path}"
 
     def onedrive_delete(self, remote_path):
-        drive = self._get_drive()
-        item = drive.get_item_by_path(remote_path)
-        item.delete()
+        url = f"{GRAPH_ME}/drive/root:{remote_path}:"
+        self._graph_delete(url)
         return f"Deleted {remote_path}"
 
     def onedrive_move(self, old_path, new_path):
         """Move or rename a file/folder on OneDrive."""
-        drive = self._get_drive()
-        item = drive.get_item_by_path(old_path)
-        drive_id = drive.object_id
-        item_id = item.object_id
         new = Path(new_path)
         new_parent = str(new.parent)
         if new_parent in ('/', '.', ''):
-            parent_item = drive.get_root_folder()
+            parent_url = f"{GRAPH_ME}/drive/root"
         else:
-            parent_item = drive.get_item_by_path(new_parent)
-        parent_id = parent_item.object_id
-        url = f"{GRAPH_BASE}/drives/{drive_id}/items/{item_id}"
+            parent_url = f"{GRAPH_ME}/drive/root:{new_parent}:"
+        parent_data = self._graph_get(parent_url)
+        parent_id = parent_data.get('id', '')
+        url = f"{GRAPH_ME}/drive/root:{old_path}:"
         self._graph_patch(url, {
             'name': new.name,
             'parentReference': {'id': parent_id},
@@ -979,11 +977,7 @@ class M365Client:
         return f"Moved {old_path} to {new_path}"
 
     def onedrive_share(self, remote_path, anyone=False, edit=False):
-        drive = self._get_drive()
-        item = drive.get_item_by_path(remote_path)
-        drive_id = drive.object_id
-        item_id = item.object_id
-        url = f"{GRAPH_BASE}/drives/{drive_id}/items/{item_id}/createLink"
+        url = f"{GRAPH_ME}/drive/root:{remote_path}:/createLink"
         data = {
             'type': 'edit' if edit else 'view',
             'scope': 'anonymous' if anyone else 'organization',
@@ -1037,37 +1031,62 @@ class M365Client:
 
     def onenote_create_page(self, notebook_name, section_name, title, html_content):
         try:
-            onenote = self.account.onenote()
-            notebooks = list(onenote.list_notebooks())
-            notebook = next(
-                (nb for nb in notebooks if nb.name.lower() == notebook_name.lower()),
+            # Get or create notebook
+            nbs = self._graph_get(f"{GRAPH_ME}/onenote/notebooks",
+                                  params={'$select': 'id,displayName'})
+            nb = next(
+                (n for n in nbs.get('value', [])
+                 if n.get('displayName', '').lower() == notebook_name.lower()),
                 None,
             )
-            if not notebook:
-                notebook = onenote.create_notebook(name=notebook_name)
-            sections = list(notebook.list_sections())
-            section = next(
-                (s for s in sections if s.name.lower() == section_name.lower()),
+            if not nb:
+                nb = self._graph_post(
+                    f"{GRAPH_ME}/onenote/notebooks",
+                    {'displayName': notebook_name},
+                )
+            nb_id = nb.get('id', '')
+
+            # Get or create section
+            secs = self._graph_get(
+                f"{GRAPH_ME}/onenote/notebooks/{nb_id}/sections",
+                params={'$select': 'id,displayName'},
+            )
+            sec = next(
+                (s for s in secs.get('value', [])
+                 if s.get('displayName', '').lower() == section_name.lower()),
                 None,
             )
-            if not section:
-                section = notebook.create_section(name=section_name)
+            if not sec:
+                sec = self._graph_post(
+                    f"{GRAPH_ME}/onenote/notebooks/{nb_id}/sections",
+                    {'displayName': section_name},
+                )
+            sec_id = sec.get('id', '')
+
+            # Create page
             page_html = (
                 f'<!DOCTYPE html><html><head><title>{title}</title></head>'
                 f'<body>{html_content}</body></html>'
             )
-            page = section.create_page(content=page_html)
-            return f"OneNote page '{title}' created" if page else "Page creation failed"
+            headers = self._graph_headers(content_type='text/html')
+            resp = requests.post(
+                f"{GRAPH_ME}/onenote/sections/{sec_id}/pages",
+                headers=headers,
+                data=page_html.encode('utf-8'),
+                timeout=30,
+            )
+            resp.raise_for_status()
+            return f"OneNote page '{title}' created"
         except Exception as exc:
             return f"OneNote error: {exc}"
 
     # ── Excel ─────────────────────────────────────────────────────────────────
 
     def excel_update(self, onedrive_path, sheet_name, cell_range, values):
-        drive = self._get_drive()
-        item = drive.get_item_by_path(onedrive_path)
-        drive_id = drive.object_id
-        item_id = item.object_id
+        drive_data = self._graph_get(f"{GRAPH_ME}/drive")
+        drive_id = drive_data.get('id', '')
+        item_data = self._graph_get(f"{GRAPH_ME}/drive/root:{onedrive_path}:")
+        item_id = item_data.get('id', '')
         rows, cols = _parse_excel_range(cell_range)
         flat = list(values)
         values_2d = []
@@ -1135,12 +1154,8 @@ class M365Client:
     # ── Microsoft ToDo / Tasks ────────────────────────────────────────────────
 
     def todo_list_task_lists(self):
-        url = f"{self._todo_base_url()}/todo/lists"
-        try:
-            data = self._graph_get(url)
-        except Exception as exc:
-            self._raise_if_todo_401(exc, endpoint=url, user_id=self.user)
-            raise
+        url = f"{GRAPH_ME}/todo/lists"
+        data = self._graph_get(url)
         return [
             {
                 'id': lst.get('id', ''),
@@ -1152,39 +1167,23 @@ class M365Client:
         ]
 
     def todo_create_task_list(self, name):
-        url = f"{self._todo_base_url()}/todo/lists"
-        try:
-            result = self._graph_post(url, {'displayName': name})
-        except Exception as exc:
-            self._raise_if_todo_401(exc, endpoint=url, user_id=self.user)
-            raise
+        url = f"{GRAPH_ME}/todo/lists"
+        result = self._graph_post(url, {'displayName': name})
         return f"Task list '{name}' created (ID: {result.get('id', '')})"
 
     def todo_rename_task_list(self, list_id, new_name):
-        url = f"{self._todo_base_url()}/todo/lists/{list_id}"
-        try:
-            self._graph_patch(url, {'displayName': new_name})
-        except Exception as exc:
-            self._raise_if_todo_401(exc, endpoint=url, user_id=self.user)
-            raise
+        url = f"{GRAPH_ME}/todo/lists/{list_id}"
+        self._graph_patch(url, {'displayName': new_name})
         return f"Task list {list_id} renamed to '{new_name}'"
 
     def todo_delete_task_list(self, list_id):
-        url = f"{self._todo_base_url()}/todo/lists/{list_id}"
-        try:
-            self._graph_delete(url)
-        except Exception as exc:
-            self._raise_if_todo_401(exc, endpoint=url, user_id=self.user)
-            raise
+        url = f"{GRAPH_ME}/todo/lists/{list_id}"
+        self._graph_delete(url)
         return f"Task list {list_id} deleted"
 
     def todo_list_tasks(self, list_id, due_after=None, due_before=None):
-        url = f"{self._todo_base_url()}/todo/lists/{list_id}/tasks?$top=100&$expand=checklistItems"
-        try:
-            data = self._graph_get(url)
-        except Exception as exc:
-            self._raise_if_todo_401(exc, endpoint=url, user_id=self.user)
-            raise
+        url = f"{GRAPH_ME}/todo/lists/{list_id}/tasks?$top=100&$expand=checklistItems"
+        data = self._graph_get(url)
         tasks = self._format_tasks(data.get('value', []))
         if due_after:
             tasks = [t for t in tasks if t.get('due') and t['due'][:10] >= due_after]
@@ -1193,12 +1192,7 @@ class M365Client:
         return tasks
 
     def todo_get_all_tasks(self, due_after=None, due_before=None):
-        url = f"{self._todo_base_url()}/todo/lists"
-        try:
-            lists_data = self._graph_get(url)
-        except Exception as exc:
-            self._raise_if_todo_401(exc, endpoint=url, user_id=self.user)
-            raise
+        lists_data = self._graph_get(f"{GRAPH_ME}/todo/lists")
         all_tasks = []
         for lst in lists_data.get('value', []):
             list_id = lst['id']
@@ -1251,12 +1245,8 @@ class M365Client:
         if reminder_datetime:
             task_data['reminderDateTime'] = {'dateTime': reminder_datetime, 'timeZone': 'UTC'}
             task_data['isReminderOn'] = True
-        url = f"{self._todo_base_url()}/todo/lists/{list_id}/tasks"
-        try:
-            result = self._graph_post(url, task_data)
-        except Exception as exc:
-            self._raise_if_todo_401(exc, endpoint=url, user_id=self.user)
-            raise
+        url = f"{GRAPH_ME}/todo/lists/{list_id}/tasks"
+        result = self._graph_post(url, task_data)
         return f"Task '{title}' created (ID: {result.get('id', '')})"
 
     def todo_update_task(self, list_id, task_id, title=None, note=None,
@@ -1273,54 +1263,34 @@ class M365Client:
             task_data['isReminderOn'] = True
         if not task_data:
             return "No fields to update – specify at least one option."
-        url = f"{self._todo_base_url()}/todo/lists/{list_id}/tasks/{task_id}"
-        try:
-            self._graph_patch(url, task_data)
-        except Exception as exc:
-            self._raise_if_todo_401(exc, endpoint=url, user_id=self.user)
-            raise
+        url = f"{GRAPH_ME}/todo/lists/{list_id}/tasks/{task_id}"
+        self._graph_patch(url, task_data)
         return f"Task {task_id} updated"
 
     def todo_complete_task(self, list_id, task_id):
-        url = f"{self._todo_base_url()}/todo/lists/{list_id}/tasks/{task_id}"
-        try:
-            self._graph_patch(url, {'status': 'completed'})
-        except Exception as exc:
-            self._raise_if_todo_401(exc, endpoint=url, user_id=self.user)
-            raise
+        url = f"{GRAPH_ME}/todo/lists/{list_id}/tasks/{task_id}"
+        self._graph_patch(url, {'status': 'completed'})
         return f"Task {task_id} marked as completed"
 
     def todo_add_step(self, list_id, task_id, step_title):
-        url = f"{self._todo_base_url()}/todo/lists/{list_id}/tasks/{task_id}/checklistItems"
-        try:
-            result = self._graph_post(url, {'displayName': step_title, 'isChecked': False})
-        except Exception as exc:
-            self._raise_if_todo_401(exc, endpoint=url, user_id=self.user)
-            raise
+        url = f"{GRAPH_ME}/todo/lists/{list_id}/tasks/{task_id}/checklistItems"
+        result = self._graph_post(url, {'displayName': step_title, 'isChecked': False})
         return f"Step '{step_title}' added (ID: {result.get('id', '')})"
 
     def todo_complete_step(self, list_id, task_id, step_id):
         url = (
-            f"{self._todo_base_url()}/todo/lists/{list_id}"
+            f"{GRAPH_ME}/todo/lists/{list_id}"
             f"/tasks/{task_id}/checklistItems/{step_id}"
         )
-        try:
-            self._graph_patch(url, {'isChecked': True})
-        except Exception as exc:
-            self._raise_if_todo_401(exc, endpoint=url, user_id=self.user)
-            raise
+        self._graph_patch(url, {'isChecked': True})
         return f"Step {step_id} marked as completed"
 
     def todo_move_task(self, from_list_id, task_id, to_list_id):
         src_url = (
-            f"{self._todo_base_url()}/todo/lists/{from_list_id}"
+            f"{GRAPH_ME}/todo/lists/{from_list_id}"
             f"/tasks/{task_id}?$expand=checklistItems"
         )
-        try:
-            task = self._graph_get(src_url)
-        except Exception as exc:
-            self._raise_if_todo_401(exc, endpoint=src_url, user_id=self.user)
-            raise
+        task = self._graph_get(src_url)
 
         task_data = {'title': task.get('title', '')}
         if task.get('body'):
@@ -1333,17 +1303,13 @@ class M365Client:
         if task.get('status') == 'completed':
             task_data['status'] = 'completed'
 
-        dst_url = f"{self._todo_base_url()}/todo/lists/{to_list_id}/tasks"
-        try:
-            new_task = self._graph_post(dst_url, task_data)
-        except Exception as exc:
-            self._raise_if_todo_401(exc, endpoint=dst_url, user_id=self.user)
-            raise
+        dst_url = f"{GRAPH_ME}/todo/lists/{to_list_id}/tasks"
+        new_task = self._graph_post(dst_url, task_data)
         new_task_id = new_task.get('id', '')
 
         for item in (task.get('checklistItems') or []):
             step_url = (
-                f"{self._todo_base_url()}/todo/lists/{to_list_id}"
+                f"{GRAPH_ME}/todo/lists/{to_list_id}"
                 f"/tasks/{new_task_id}/checklistItems"
             )
             self._graph_post(step_url, {
@@ -1351,45 +1317,30 @@ class M365Client:
                 'isChecked': item.get('isChecked', False),
             })
 
-        self._graph_delete(
-            f"{self._todo_base_url()}/todo/lists/{from_list_id}/tasks/{task_id}"
-        )
+        self._graph_delete(f"{GRAPH_ME}/todo/lists/{from_list_id}/tasks/{task_id}")
         return (
             f"Task moved from list {from_list_id} to {to_list_id} "
             f"(new ID: {new_task_id})"
         )
 
-
     def todo_get_task(self, list_id, task_id):
         url = (
-            f"{self._todo_base_url()}/todo/lists/{list_id}"
+            f"{GRAPH_ME}/todo/lists/{list_id}"
             f"/tasks/{task_id}?$expand=checklistItems"
         )
-        try:
-            data = self._graph_get(url)
-        except Exception as exc:
-            self._raise_if_todo_401(exc, endpoint=url, user_id=self.user)
-            raise
+        data = self._graph_get(url)
         tasks = self._format_tasks([data])
         return tasks[0] if tasks else None
 
     def todo_delete_task(self, list_id, task_id):
-        url = f"{self._todo_base_url()}/todo/lists/{list_id}/tasks/{task_id}"
-        try:
-            self._graph_delete(url)
-        except Exception as exc:
-            self._raise_if_todo_401(exc, endpoint=url, user_id=self.user)
-            raise
+        url = f"{GRAPH_ME}/todo/lists/{list_id}/tasks/{task_id}"
+        self._graph_delete(url)
         return f"Task {task_id} deleted"
 
     def todo_get_default_list_id(self):
-        """Return the ID of the default task list using wellKnownListName, or the first list."""
-        url = f"{self._todo_base_url()}/todo/lists?$select=id,displayName,wellKnownListName"
-        try:
-            data = self._graph_get(url)
-        except Exception as exc:
-            self._raise_if_todo_401(exc, endpoint=url, user_id=self.user)
-            raise
+        """Return the ID of the default task list (wellKnownListName=tasks), or first."""
+        url = f"{GRAPH_ME}/todo/lists?$select=id,displayName,wellKnownListName"
+        data = self._graph_get(url)
         lists = data.get('value', [])
         if not lists:
             return None
@@ -1397,6 +1348,324 @@ class M365Client:
             if lst.get('wellKnownListName') == 'tasks':
                 return lst.get('id', '')
         return lists[0].get('id', '')
+
+    # ── Teams Chat ────────────────────────────────────────────────────────────
+
+    def chat_list(self, limit=20):
+        """List the signed-in user's chats."""
+        url = f"{GRAPH_ME}/chats"
+        params = {
+            '$top': limit,
+            '$expand': 'members',
+            '$select': 'id,topic,chatType,createdDateTime',
+        }
+        data = self._graph_get(url, params=params)
+        result = []
+        for chat in data.get('value', []):
+            members = [
+                m.get('displayName', m.get('email', ''))
+                for m in chat.get('members', [])
+            ]
+            result.append({
+                'id': chat.get('id', ''),
+                'topic': chat.get('topic', ''),
+                'type': chat.get('chatType', ''),
+                'members': members,
+                'created': chat.get('createdDateTime', ''),
+            })
+        return result
+
+    def chat_create(self, members, topic=None):
+        """Create a chat with one or more members (email addresses or user IDs)."""
+        member_list = [
+            {
+                '@odata.type': '#microsoft.graph.aadUserConversationMember',
+                'roles': ['owner'],
+                'user@odata.bind': f"{GRAPH_BASE}/users('{m}')",
+            }
+            for m in members
+        ]
+        data = {
+            'chatType': 'oneOnOne' if len(members) == 2 else 'group',
+            'members': member_list,
+        }
+        if topic and len(members) > 2:
+            data['topic'] = topic
+        result = self._graph_post(f"{GRAPH_BASE}/chats", data)
+        return f"Chat created (ID: {result.get('id', '')})"
+
+    def chat_send(self, chat_id, message, content_type='text'):
+        """Send a message to a chat."""
+        url = f"{GRAPH_BASE}/chats/{chat_id}/messages"
+        data = {'body': {'content': message, 'contentType': content_type}}
+        result = self._graph_post(url, data)
+        return f"Message sent (ID: {result.get('id', '')})"
+
+    def chat_read(self, chat_id, limit=20):
+        """List messages in a chat."""
+        url = f"{GRAPH_BASE}/chats/{chat_id}/messages"
+        params = {'$top': limit}
+        data = self._graph_get(url, params=params)
+        result = []
+        for msg in data.get('value', []):
+            sender = (msg.get('from') or {}).get('user', {}).get('displayName', 'Unknown')
+            result.append({
+                'id': msg.get('id', ''),
+                'sender': sender,
+                'body': (msg.get('body') or {}).get('content', ''),
+                'created': msg.get('createdDateTime', ''),
+            })
+        return result
+
+    # ── Online Meetings ───────────────────────────────────────────────────────
+
+    def meeting_create(self, subject, start_iso, end_iso, participants=None):
+        """Create an online meeting."""
+        data = {
+            'subject': subject,
+            'startDateTime': start_iso,
+            'endDateTime': end_iso,
+        }
+        if participants:
+            data['participants'] = {
+                'attendees': [
+                    {'upn': p, 'role': 'attendee'}
+                    for p in participants
+                ]
+            }
+        result = self._graph_post(f"{GRAPH_ME}/onlineMeetings", data)
+        return {
+            'id': result.get('id', ''),
+            'join_url': result.get('joinWebUrl', ''),
+            'join_id': (result.get('audioConferencing') or {}).get('conferenceId', ''),
+            'subject': result.get('subject', ''),
+            'start': result.get('startDateTime', ''),
+            'end': result.get('endDateTime', ''),
+        }
+
+    def meeting_list(self, days=30):
+        """List upcoming online meetings via calendarView."""
+        now_utc = datetime.now(timezone.utc)
+        cutoff = now_utc + timedelta(days=days)
+        url = f"{GRAPH_ME}/calendarView"
+        params = {
+            'startDateTime': now_utc.strftime('%Y-%m-%dT%H:%M:%SZ'),
+            'endDateTime': cutoff.strftime('%Y-%m-%dT%H:%M:%SZ'),
+            '$filter': 'isOnlineMeeting eq true',
+            '$select': 'id,subject,start,end,onlineMeeting,isOnlineMeeting',
+            '$orderby': 'start/dateTime asc',
+            '$top': 50,
+        }
+        data = self._graph_get(url, params=params)
+        result = []
+        for event in data.get('value', []):
+            result.append({
+                'id': event.get('id', ''),
+                'subject': event.get('subject', ''),
+                'start': (event.get('start') or {}).get('dateTime', ''),
+                'end': (event.get('end') or {}).get('dateTime', ''),
+                'join_url': (event.get('onlineMeeting') or {}).get('joinUrl', ''),
+            })
+        return result
+
+    def meeting_read(self, meeting_id):
+        """Get details of a calendar event that is an online meeting."""
+        url = f"{GRAPH_ME}/calendar/events/{meeting_id}"
+        result = self._graph_get(url)
+        return {
+            'id': result.get('id', ''),
+            'subject': result.get('subject', ''),
+            'start': (result.get('start') or {}).get('dateTime', ''),
+            'end': (result.get('end') or {}).get('dateTime', ''),
+            'join_url': (result.get('onlineMeeting') or {}).get('joinUrl', ''),
+            'body': (result.get('body') or {}).get('content', ''),
+            'is_online_meeting': result.get('isOnlineMeeting', False),
+        }
+
+    def meeting_delete(self, meeting_id):
+        """Delete a calendar event / online meeting."""
+        url = f"{GRAPH_ME}/calendar/events/{meeting_id}"
+        self._graph_delete(url)
+        return f"Meeting {meeting_id} deleted"
+
+    # ── Microsoft Bookings ────────────────────────────────────────────────────
+
+    def booking_businesses(self):
+        """List all Bookings businesses in the tenant."""
+        url = f"{GRAPH_BASE}/solutions/bookingBusinesses"
+        data = self._graph_get(url)
+        result = []
+        for b in data.get('value', []):
+            result.append({
+                'id': b.get('id', ''),
+                'name': b.get('displayName', ''),
+                'email': b.get('email', ''),
+                'phone': b.get('phone', ''),
+            })
+        return result
+
+    def booking_list(self, business_id, limit=50):
+        """List appointments for a Bookings business."""
+        url = (
+            f"{GRAPH_BASE}/solutions/bookingBusinesses"
+            f"/{business_id}/appointments"
+        )
+        params = {'$top': limit}
+        data = self._graph_get(url, params=params)
+        result = []
+        for appt in data.get('value', []):
+            customers = appt.get('customers') or [{}]
+            result.append({
+                'id': appt.get('id', ''),
+                'service_name': appt.get('serviceName', ''),
+                'start': (appt.get('startDateTime') or {}).get('dateTime', ''),
+                'end': (appt.get('endDateTime') or {}).get('dateTime', ''),
+                'customer': customers[0].get('name', '') if customers else '',
+                'price': appt.get('price', 0),
+            })
+        return result
+
+    def booking_read(self, business_id, booking_id):
+        """Get details of a single Bookings appointment."""
+        url = (
+            f"{GRAPH_BASE}/solutions/bookingBusinesses"
+            f"/{business_id}/appointments/{booking_id}"
+        )
+        appt = self._graph_get(url)
+        return {
+            'id': appt.get('id', ''),
+            'service_name': appt.get('serviceName', ''),
+            'start': (appt.get('startDateTime') or {}).get('dateTime', ''),
+            'end': (appt.get('endDateTime') or {}).get('dateTime', ''),
+            'customers': appt.get('customers', []),
+            'notes': appt.get('customerNotes', ''),
+            'price': appt.get('price', 0),
+            'staff': appt.get('staffMemberIds', []),
+        }
+
+    def booking_create(self, business_id, service_id, start_iso, end_iso,
+                       customer_name='', customer_email='', customer_phone='',
+                       notes='', staff_ids=None):
+        """Create a Bookings appointment."""
+        data = {
+            'serviceId': service_id,
+            'startDateTime': {'dateTime': start_iso, 'timeZone': 'UTC'},
+            'endDateTime': {'dateTime': end_iso, 'timeZone': 'UTC'},
+            'customers': [{
+                'name': customer_name,
+                'emailAddress': customer_email,
+                'phone': customer_phone,
+            }],
+            'customerNotes': notes,
+        }
+        if staff_ids:
+            data['staffMemberIds'] = (
+                staff_ids if isinstance(staff_ids, list) else [staff_ids]
+            )
+        url = (
+            f"{GRAPH_BASE}/solutions/bookingBusinesses"
+            f"/{business_id}/appointments"
+        )
+        result = self._graph_post(url, data)
+        return f"Booking created (ID: {result.get('id', '')})"
+
+    def booking_cancel(self, business_id, booking_id, reason=''):
+        """Cancel a Bookings appointment."""
+        url = (
+            f"{GRAPH_BASE}/solutions/bookingBusinesses"
+            f"/{business_id}/appointments/{booking_id}/cancel"
+        )
+        self._graph_post(url, {'cancellationMessage': reason})
+        return f"Booking {booking_id} cancelled"
+
+    # ── SharePoint Sites ──────────────────────────────────────────────────────
+
+    def sites_list(self, limit=20):
+        """List SharePoint sites accessible to the user."""
+        url = f"{GRAPH_BASE}/sites?search=*"
+        params = {'$top': limit, '$select': 'id,displayName,webUrl,description'}
+        data = self._graph_get(url, params=params)
+        result = []
+        for site in data.get('value', []):
+            result.append({
+                'id': site.get('id', ''),
+                'name': site.get('displayName', ''),
+                'url': site.get('webUrl', ''),
+                'description': site.get('description', ''),
+            })
+        return result
+
+    def sites_search(self, query, limit=20):
+        """Search SharePoint sites by keyword."""
+        url = f"{GRAPH_BASE}/sites"
+        params = {
+            'search': query,
+            '$top': limit,
+            '$select': 'id,displayName,webUrl',
+        }
+        data = self._graph_get(url, params=params)
+        result = []
+        for site in data.get('value', []):
+            result.append({
+                'id': site.get('id', ''),
+                'name': site.get('displayName', ''),
+                'url': site.get('webUrl', ''),
+            })
+        return result
+
+    # ── OneNote notebooks / sections / pages listing ──────────────────────────
+
+    def notes_list_notebooks(self, limit=50):
+        """List OneNote notebooks."""
+        url = f"{GRAPH_ME}/onenote/notebooks"
+        params = {
+            '$top': limit,
+            '$select': 'id,displayName,createdDateTime,lastModifiedDateTime',
+        }
+        data = self._graph_get(url, params=params)
+        return [
+            {
+                'id': nb.get('id', ''),
+                'name': nb.get('displayName', ''),
+                'created': nb.get('createdDateTime', ''),
+                'modified': nb.get('lastModifiedDateTime', ''),
+            }
+            for nb in data.get('value', [])
+        ]
+
+    def notes_list_sections(self, notebook_id, limit=50):
+        """List sections in a OneNote notebook."""
+        url = (
+            f"{GRAPH_ME}/onenote/notebooks/{notebook_id}/sections"
+        )
+        params = {'$top': limit, '$select': 'id,displayName'}
+        data = self._graph_get(url, params=params)
+        return [
+            {
+                'id': s.get('id', ''),
+                'name': s.get('displayName', ''),
+                'notebook_id': notebook_id,
+            }
+            for s in data.get('value', [])
+        ]
+
+    def notes_list_pages(self, section_id, limit=50):
+        """List pages in a OneNote section."""
+        url = f"{GRAPH_ME}/onenote/sections/{section_id}/pages"
+        params = {
+            '$top': limit,
+            '$select': 'id,title,createdDateTime',
+            '$orderby': 'createdDateTime desc',
+        }
+        data = self._graph_get(url, params=params)
+        return [
+            {
+                'id': p.get('id', ''),
+                'title': p.get('title', '(untitled)'),
+                'created': p.get('createdDateTime', ''),
+            }
+            for p in data.get('value', [])
+        ]
 
 
 if __name__ == "__main__":

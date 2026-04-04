@@ -1,5 +1,5 @@
 """
-__main__.py – CLI entry point for the OpenClaw M365 skill (v0.4.0).
+__main__.py – CLI entry point for the OpenClaw M365 skill (v0.5.0).
 
 Invoked as:  python -m m365_openclaw <command> [arguments...]
 Or via the  m365  wrapper script placed in ~/.local/bin.
@@ -10,7 +10,12 @@ import json
 import sys
 
 USAGE = """\
-OpenClaw M365 CLI v0.4.0 – Microsoft 365 for agents
+OpenClaw M365 CLI v0.5.0 – Microsoft 365 for agents (delegated / device-code auth)
+
+━━━ AUTH ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  auth-login
+      Force a new device-code login (opens https://microsoft.com/devicelogin).
+      Use this for initial setup or after token expiry.
 
 ━━━ MAIL ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   mail-list [N]
@@ -215,7 +220,77 @@ OpenClaw M365 CLI v0.4.0 – Microsoft 365 for agents
 
 ━━━ ONENOTE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   onenote-create <notebook> <section> <title> <html>
-      Create a OneNote page (requires Notes.ReadWrite.All delegated permission)
+      Create a OneNote page.
+
+  notes-list
+      List OneNote notebooks.
+      --sections <notebook_id>   List sections in a notebook
+      --pages <section_id>       List pages in a section
+
+━━━ TEAMS CHAT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  chat-list [N]
+      List chats (default: 20).
+
+  chat-create
+      Create a new chat.
+      --members EMAIL[,...]   Comma-separated list of participants (required)
+      --topic TEXT            Chat topic (only for group chats)
+
+  chat-send <chat_id>
+      Send a message to a chat.
+      --body TEXT   Message text, required
+
+  chat-read <chat_id> [N]
+      List N recent messages in a chat (default: 20).
+
+━━━ ONLINE MEETINGS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  meeting-create
+      Create an online meeting.
+      --subject TEXT   Meeting title, required
+      --start ISO      Start datetime (ISO 8601), required
+      --end ISO        End datetime (ISO 8601), required
+      --participants EMAIL[,...]   Comma-separated attendees
+
+  meeting-list [N]
+      List upcoming online meetings (N = days into the future, default: 30).
+
+  meeting-read <meeting_id>
+      Show details of an online meeting / calendar event.
+
+  meeting-delete <meeting_id>
+      Delete an online meeting / calendar event.
+
+━━━ BOOKINGS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  booking-businesses
+      List Microsoft Bookings businesses in the tenant.
+
+  booking-list <business_id> [N]
+      List appointments for a Bookings business (default: 50).
+
+  booking-read <business_id> <booking_id>
+      Show details of a Bookings appointment.
+
+  booking-create <business_id>
+      Create a Bookings appointment.
+      --service-id ID        Service ID (required)
+      --start ISO            Start datetime (required)
+      --end ISO              End datetime (required)
+      --customer-name TEXT
+      --customer-email EMAIL
+      --customer-phone PHONE
+      --notes TEXT
+      --staff ID[,...]       Staff member IDs (comma-separated)
+
+  booking-cancel <business_id> <booking_id>
+      Cancel a Bookings appointment.
+      --reason TEXT   Cancellation message
+
+━━━ SHAREPOINT SITES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  sites-list [N]
+      List SharePoint sites accessible to the user (default: 20).
+
+  sites-search <query>
+      Search SharePoint sites by keyword.
 
 ━━━ EXCEL / WORD / POWERPOINT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   excel-update <remote_path> <sheet> <range> [value ...]
@@ -260,6 +335,17 @@ def main():
 
     cmd = sys.argv[1]
     args = sys.argv[2:]
+
+    # auth-login does not need an existing session
+    if cmd == "auth-login":
+        try:
+            from m365_openclaw.core import M365Client
+            M365Client(force_reauth=True)
+            print("Authentication successful. Token cached for headless use.")
+        except Exception as exc:
+            print(f"Authentication error: {exc}", file=sys.stderr)
+            sys.exit(1)
+        return
 
     try:
         from m365_openclaw.core import M365Client
@@ -1129,6 +1215,215 @@ def main():
                 print("Usage: m365 todo-move-task <from_list_id> <task_id> <to_list_id>")
                 sys.exit(1)
             print(client.todo_move_task(args[0], args[1], args[2]))
+
+        # ── OneNote extended listing ──────────────────────────────────────────
+
+        elif cmd == "notes-list":
+            parser = argparse.ArgumentParser(prog='m365 notes-list', add_help=False)
+            parser.add_argument('--sections', metavar='NOTEBOOK_ID', default=None)
+            parser.add_argument('--pages', metavar='SECTION_ID', default=None)
+            pargs = parser.parse_args(args)
+            if pargs.pages:
+                pages = client.notes_list_pages(pargs.pages)
+                if not pages:
+                    print("No pages found.")
+                else:
+                    for p in pages:
+                        print(f"{p['created'][:10]}  {p['title']}")
+                        print(f"  ID: {p['id']}")
+            elif pargs.sections:
+                sections = client.notes_list_sections(pargs.sections)
+                if not sections:
+                    print("No sections found.")
+                else:
+                    for s in sections:
+                        print(f"{s['name']:<40} ID: {s['id']}")
+            else:
+                notebooks = client.notes_list_notebooks()
+                if not notebooks:
+                    print("No notebooks found.")
+                else:
+                    for nb in notebooks:
+                        print(f"{nb['name']:<40} ID: {nb['id']}")
+
+        # ── Teams Chat ────────────────────────────────────────────────────────
+
+        elif cmd == "chat-list":
+            limit = int(args[0]) if args and args[0].isdigit() else 20
+            chats = client.chat_list(limit=limit)
+            if not chats:
+                print("No chats found.")
+            else:
+                for c in chats:
+                    members = ", ".join(c['members'])
+                    topic = f" [{c['topic']}]" if c.get('topic') else ""
+                    print(f"[{c['type']}]{topic} ID: {c['id']}")
+                    print(f"  Members: {members}")
+
+        elif cmd == "chat-create":
+            parser = argparse.ArgumentParser(prog='m365 chat-create')
+            parser.add_argument('--members', required=True,
+                                help='Comma-separated list of email addresses or user IDs')
+            parser.add_argument('--topic', default=None)
+            pargs = parser.parse_args(args)
+            members = [m.strip() for m in pargs.members.split(',') if m.strip()]
+            if len(members) < 2:
+                print("At least 2 members are required for a chat.", file=sys.stderr)
+                sys.exit(1)
+            print(client.chat_create(members, topic=pargs.topic))
+
+        elif cmd == "chat-send":
+            parser = argparse.ArgumentParser(prog='m365 chat-send')
+            parser.add_argument('chat_id')
+            parser.add_argument('--body', required=True)
+            pargs = parser.parse_args(args)
+            print(client.chat_send(pargs.chat_id, pargs.body))
+
+        elif cmd == "chat-read":
+            parser = argparse.ArgumentParser(prog='m365 chat-read', add_help=False)
+            parser.add_argument('chat_id')
+            parser.add_argument('limit', nargs='?', type=int, default=20)
+            pargs = parser.parse_args(args)
+            messages = client.chat_read(pargs.chat_id, limit=pargs.limit)
+            if not messages:
+                print("No messages found.")
+            else:
+                for m in messages:
+                    print(f"{m['created'][:19]}  {m['sender']}: {m['body'][:120]}")
+
+        # ── Online Meetings ───────────────────────────────────────────────────
+
+        elif cmd == "meeting-create":
+            parser = argparse.ArgumentParser(prog='m365 meeting-create')
+            parser.add_argument('--subject', required=True)
+            parser.add_argument('--start', required=True, dest='start_iso')
+            parser.add_argument('--end', required=True, dest='end_iso')
+            parser.add_argument('--participants', default='')
+            pargs = parser.parse_args(args)
+            participants = [p.strip() for p in pargs.participants.split(',')
+                            if p.strip()]
+            result = client.meeting_create(
+                pargs.subject, pargs.start_iso, pargs.end_iso,
+                participants=participants or None,
+            )
+            print(f"Meeting '{result['subject']}' created")
+            print(f"  ID:       {result['id']}")
+            print(f"  Join URL: {result['join_url']}")
+            if result.get('join_id'):
+                print(f"  Join ID:  {result['join_id']}")
+
+        elif cmd == "meeting-list":
+            days = int(args[0]) if args and args[0].isdigit() else 30
+            meetings = client.meeting_list(days=days)
+            if not meetings:
+                print(f"No online meetings in the next {days} days.")
+            else:
+                for m in meetings:
+                    print(f"{m['start'][:16]}  {m['subject']}")
+                    print(f"  ID: {m['id']}")
+                    if m.get('join_url'):
+                        print(f"  Join: {m['join_url']}")
+
+        elif cmd == "meeting-read":
+            if not args:
+                print("Usage: m365 meeting-read <meeting_id>")
+                sys.exit(1)
+            _print_json(client.meeting_read(args[0]))
+
+        elif cmd == "meeting-delete":
+            if not args:
+                print("Usage: m365 meeting-delete <meeting_id>")
+                sys.exit(1)
+            print(client.meeting_delete(args[0]))
+
+        # ── Microsoft Bookings ────────────────────────────────────────────────
+
+        elif cmd == "booking-businesses":
+            businesses = client.booking_businesses()
+            if not businesses:
+                print("No Bookings businesses found.")
+            else:
+                for b in businesses:
+                    print(f"{b['name']:<40} ID: {b['id']}")
+                    if b.get('email'):
+                        print(f"  Email: {b['email']}")
+
+        elif cmd == "booking-list":
+            if not args:
+                print("Usage: m365 booking-list <business_id> [N]")
+                sys.exit(1)
+            business_id = args[0]
+            limit = int(args[1]) if len(args) > 1 and args[1].isdigit() else 50
+            bookings = client.booking_list(business_id, limit=limit)
+            if not bookings:
+                print("No bookings found.")
+            else:
+                for b in bookings:
+                    print(f"{b['start'][:16]}  {b['service_name']}  – {b['customer']}")
+                    print(f"  ID: {b['id']}")
+
+        elif cmd == "booking-read":
+            if len(args) < 2:
+                print("Usage: m365 booking-read <business_id> <booking_id>")
+                sys.exit(1)
+            _print_json(client.booking_read(args[0], args[1]))
+
+        elif cmd == "booking-create":
+            parser = argparse.ArgumentParser(prog='m365 booking-create')
+            parser.add_argument('business_id')
+            parser.add_argument('--service-id', required=True)
+            parser.add_argument('--start', required=True, dest='start_iso')
+            parser.add_argument('--end', required=True, dest='end_iso')
+            parser.add_argument('--customer-name', default='')
+            parser.add_argument('--customer-email', default='')
+            parser.add_argument('--customer-phone', default='')
+            parser.add_argument('--notes', default='')
+            parser.add_argument('--staff', default='',
+                                help='Comma-separated staff member IDs')
+            pargs = parser.parse_args(args)
+            staff_ids = [s.strip() for s in pargs.staff.split(',') if s.strip()]
+            print(client.booking_create(
+                pargs.business_id, pargs.service_id,
+                pargs.start_iso, pargs.end_iso,
+                customer_name=pargs.customer_name,
+                customer_email=pargs.customer_email,
+                customer_phone=pargs.customer_phone,
+                notes=pargs.notes,
+                staff_ids=staff_ids or None,
+            ))
+
+        elif cmd == "booking-cancel":
+            parser = argparse.ArgumentParser(prog='m365 booking-cancel')
+            parser.add_argument('business_id')
+            parser.add_argument('booking_id')
+            parser.add_argument('--reason', default='')
+            pargs = parser.parse_args(args)
+            print(client.booking_cancel(pargs.business_id, pargs.booking_id,
+                                        reason=pargs.reason))
+
+        # ── SharePoint Sites ──────────────────────────────────────────────────
+
+        elif cmd == "sites-list":
+            limit = int(args[0]) if args and args[0].isdigit() else 20
+            sites = client.sites_list(limit=limit)
+            if not sites:
+                print("No sites found.")
+            else:
+                for s in sites:
+                    print(f"{s['name']:<40} {s['url']}")
+                    print(f"  ID: {s['id']}")
+
+        elif cmd == "sites-search":
+            if not args:
+                print("Usage: m365 sites-search <query>")
+                sys.exit(1)
+            sites = client.sites_search(args[0])
+            if not sites:
+                print("No sites found.")
+            else:
+                for s in sites:
+                    print(f"{s['name']:<40} {s['url']}")
+                    print(f"  ID: {s['id']}")
 
         else:
             print(f"Unknown command: {cmd}", file=sys.stderr)

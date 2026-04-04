@@ -2,14 +2,12 @@ from setuptools import setup, find_packages
 
 setup(
     name='m365_openclaw',
-    version='0.3.0',
-    description='Microsoft m365 Skill for OpenClaw agents',
+    version='0.5.0',
+    description='Microsoft m365 Skill for OpenClaw agents (delegated / device-code auth)',
     packages=find_packages(where='src'),
     package_dir={'': 'src'},
     install_requires=[
-        'O365',
         'msal',
-        'msal_extensions',
         'python-dotenv',
         'python-docx',
         'python-pptx',

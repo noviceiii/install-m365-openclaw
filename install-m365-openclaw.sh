@@ -1,19 +1,15 @@
 #!/usr/bin/env bash
 # =============================================================================
-# OpenClaw M365 Graph Skill Installer v0.3.0 – RBAC-first
+# OpenClaw M365 Graph Skill Installer v0.5.0 – Delegated / Device-Code Auth
 # =============================================================================
 set -euo pipefail
 
 DEFAULT_OPENCLAW_DIR="${HOME}/.openclaw"
-DEFAULT_M365_USER="cleotine@yourdomain.com"
 
-echo "=== OpenClaw M365 Graph Skill Installer v0.3.0 (RBAC) ==="
+echo "=== OpenClaw M365 Graph Skill Installer v0.5.0 (Delegated Auth) ==="
 
 read -p "OpenClaw base directory [${DEFAULT_OPENCLAW_DIR}]: " OPENCLAW_DIR
 OPENCLAW_DIR="${OPENCLAW_DIR:-${DEFAULT_OPENCLAW_DIR}}"
-
-read -p "M365 user email for this skill [${DEFAULT_M365_USER}]: " M365_USER
-M365_USER="${M365_USER:-${DEFAULT_M365_USER}}"
 
 SKILL_NAME="m365-graph"
 INSTALL_DIR="${OPENCLAW_DIR}/skills/${SKILL_NAME}"
@@ -28,7 +24,7 @@ mkdir -p "${INSTALL_DIR}"/{src/m365_openclaw,bin} "${OPENCLAW_DIR}/credentials" 
 # venv + dependencies
 python3 -m venv "${VENV_DIR}"
 "${VENV_DIR}/bin/pip" install --upgrade pip
-"${VENV_DIR}/bin/pip" install O365 msal msal_extensions python-dotenv python-docx python-pptx openpyxl requests
+"${VENV_DIR}/bin/pip" install msal python-dotenv python-docx python-pptx openpyxl requests
 
 # Copy package files from repository structure
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -51,20 +47,23 @@ if ! grep -q "${HOME}/.local/bin" "${HOME}/.bashrc"; then
     echo 'export PATH="$HOME/.local/bin:$PATH"' >> "${HOME}/.bashrc"
 fi
 
-# .env template
+# .env template (no CLIENT_SECRET needed for delegated auth)
 cat > "${INSTALL_DIR}/.env" << EOF
 TENANT_ID=your-tenant-id-here
 CLIENT_ID=your-app-client-id-here
-CLIENT_SECRET=your-app-client-secret-here
 TOKEN_CACHE_PATH=${TOKEN_CACHE}
-M365_USER_EMAIL=${M365_USER}
 EOF
 
 echo ""
 echo "=== Next steps ==="
-echo "1. Follow Microsoft-ENTRA-ID-installation.md"
-echo "2. Run setup-exchange-policy.ps1 (RBAC mode)"
-echo "3. Fill ${INSTALL_DIR}/.env with real credentials"
-echo "4. Test: m365 calendar-list"
+echo "1. Follow Microsoft-ENTRA-ID-installation.md to register an app with"
+echo "   delegated permissions and enable Public client / device-code flow."
+echo "2. Fill ${INSTALL_DIR}/.env with TENANT_ID and CLIENT_ID."
+echo "3. Run the first-time login (device-code flow):"
+echo "      m365 auth-login"
+echo "   Open https://microsoft.com/devicelogin on any device and enter"
+echo "   the code shown in the terminal."
+echo "4. After login, the skill runs fully headless using cached refresh tokens."
+echo "5. Test: m365 calendar-list"
 echo ""
 echo "Installation complete."

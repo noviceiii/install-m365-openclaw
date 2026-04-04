@@ -31,18 +31,17 @@ GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 GRAPH_ME = f"{GRAPH_BASE}/me"
 
 # Delegated scopes required by this skill
+# Note: 'openid', 'offline_access' and 'profile' are automatically added by MSAL
+# when using PublicClientApplication + device flow. Do NOT list them again.
 DELEGATED_SCOPES = [
     "User.Read",
-    "openid",
-    "profile",
-    "offline_access",
-    "Files.ReadWrite",
     "Mail.ReadWrite",
     "Mail.Send",
     "Calendars.ReadWrite",
     "Contacts.ReadWrite",
     "MailboxFolder.ReadWrite",
     "Tasks.ReadWrite",
+    "Files.ReadWrite",
     "Notes.ReadWrite",
     "Sites.ReadWrite.All",
     "Bookings.Manage.All",

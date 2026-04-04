@@ -1354,14 +1354,20 @@ class M365Client:
         return f"Task {task_id} deleted"
 
     def todo_get_default_list_id(self):
-        """Return the ID of the default 'Tasks' list, or the first available list."""
-        lists = self.todo_list_task_lists()
+        """Return the ID of the default task list using wellKnownListName, or the first list."""
+        url = f"{self._base_url()}/todo/lists?$select=id,displayName,wellKnownListName"
+        try:
+            data = self._graph_get(url)
+        except Exception as exc:
+            self._raise_if_todo_401(exc)
+            raise
+        lists = data.get('value', [])
         if not lists:
             return None
         for lst in lists:
-            if lst['name'].lower() in ('tasks', 'aufgaben', 'tâches', 'tareas'):
-                return lst['id']
-        return lists[0]['id']
+            if lst.get('wellKnownListName') == 'tasks':
+                return lst.get('id', '')
+        return lists[0].get('id', '')
 
 
 if __name__ == "__main__":

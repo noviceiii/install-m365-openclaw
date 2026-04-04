@@ -188,7 +188,7 @@ After sign-in the app runs headless; tokens refresh automatically.
 | Command | Description | Example |
 |---------|-------------|---------|
 | `chat-list [N]` | List chats (default 20) | `m365 chat-list 10` |
-| `chat-create --members EMAIL[,...]` | Create a chat | `m365 chat-create --members alice@co.com,bob@co.com --topic "Project X"` |
+| `chat-create --members EMAIL[,...]` | Create a chat (1 address = oneOnOne, 2+ = group) | `m365 chat-create --members alice@co.com` |
 | `chat-send \<chat_id\> --body TEXT` | Send a message | `m365 chat-send 19:abc...@thread.v2 --body "Hello team!"` |
 | `chat-read \<chat_id\> [N]` | Read messages (default 20) | `m365 chat-read 19:abc...@thread.v2 10` |
 

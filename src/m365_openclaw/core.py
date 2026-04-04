@@ -1376,7 +1376,11 @@ class M365Client:
         return result
 
     def chat_create(self, members, topic=None):
-        """Create a chat with one or more members (email addresses or user IDs)."""
+        """Create a chat with one or more other members (email addresses or user IDs).
+
+        Provide the OTHER participants only – the signed-in user is added automatically
+        by the API.  One member → oneOnOne chat.  Two or more members → group chat.
+        """
         member_list = [
             {
                 '@odata.type': '#microsoft.graph.aadUserConversationMember',
@@ -1386,10 +1390,10 @@ class M365Client:
             for m in members
         ]
         data = {
-            'chatType': 'oneOnOne' if len(members) == 2 else 'group',
+            'chatType': 'oneOnOne' if len(members) == 1 else 'group',
             'members': member_list,
         }
-        if topic and len(members) > 2:
+        if topic and len(members) >= 2:
             data['topic'] = topic
         result = self._graph_post(f"{GRAPH_BASE}/chats", data)
         return f"Chat created (ID: {result.get('id', '')})"

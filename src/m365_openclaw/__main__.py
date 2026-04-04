@@ -233,7 +233,8 @@ OpenClaw M365 CLI v0.5.0 – Microsoft 365 for agents (delegated / device-code a
 
   chat-create
       Create a new chat.
-      --members EMAIL[,...]   Comma-separated list of participants (required)
+      --members EMAIL[,...]   Other participant(s). One address → oneOnOne chat;
+                              two or more → group chat (required)
       --topic TEXT            Chat topic (only for group chats)
 
   chat-send <chat_id>
@@ -1267,8 +1268,8 @@ def main():
             parser.add_argument('--topic', default=None)
             pargs = parser.parse_args(args)
             members = [m.strip() for m in pargs.members.split(',') if m.strip()]
-            if len(members) < 2:
-                print("At least 2 members are required for a chat.", file=sys.stderr)
+            if len(members) < 1:
+                print("At least 1 member is required to create a chat.", file=sys.stderr)
                 sys.exit(1)
             print(client.chat_create(members, topic=pargs.topic))
 

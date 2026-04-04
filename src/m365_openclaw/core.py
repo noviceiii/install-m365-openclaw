@@ -164,6 +164,25 @@ class M365Client:
     def _base_url(self):
         return f"https://graph.microsoft.com/v1.0/users/{self.user}"
 
+    def _todo_base_url(self):
+        """Return the Graph base URL for Microsoft To Do (app-only / client credentials).
+
+        To Do requires an explicit user-id in the path.  The /me endpoint is only
+        valid for delegated (user) tokens and always returns 401 in app-only context.
+        Set M365_USER_EMAIL in the .env file to the target user's UPN or Azure AD
+        Object ID so that this URL resolves to /users/{user-id}/todo/…
+        """
+        if self.user == "me":
+            raise ValueError(
+                "Microsoft To Do requires an explicit user identity in app-only "
+                "(client credentials) mode.\n"
+                "The /me endpoint is not allowed for application tokens and always "
+                "returns HTTP 401 Unauthorized.\n"
+                "Set M365_USER_EMAIL=<UPN or Azure AD Object ID> in your .env file "
+                "and restart the application."
+            )
+        return f"{GRAPH_BASE}/users/{self.user}"
+
     # ── Mail – error helper ───────────────────────────────────────────────────
 
     @staticmethod
@@ -182,15 +201,24 @@ class M365Client:
     # ── Todo – error helper ───────────────────────────────────────────────────
 
     @staticmethod
-    def _raise_if_todo_401(exc):
+    def _raise_if_todo_401(exc, *, endpoint: str = "", user_id: str = ""):
         try:
             import requests
             if isinstance(exc, requests.exceptions.HTTPError) and exc.response.status_code == 401:
+                endpoint_info = f"\n  Endpoint: {endpoint}" if endpoint else ""
+                user_info = f"\n  User-ID:  {user_id}" if user_id else ""
                 raise PermissionError(
                     "Microsoft To Do access denied (HTTP 401 Unauthorized).\n"
-                    "Make sure the application permission 'Tasks.ReadWrite.All' is added\n"
-                    "in Entra ID → App registrations → API permissions, and that\n"
-                    "admin consent has been granted for your organization."
+                    "Auth mode: app-only (client credentials)."
+                    f"{endpoint_info}"
+                    f"{user_info}\n"
+                    "Checklist:\n"
+                    "  1. The application permission 'Tasks.ReadWrite.All' must be added\n"
+                    "     in Entra ID → App registrations → API permissions with admin consent.\n"
+                    "  2. The /me endpoint is NOT allowed in app-only context.\n"
+                    "     All To Do calls must use /users/{user-id}/todo/… — never /me/todo/…\n"
+                    "  3. Set M365_USER_EMAIL=<UPN or Azure AD Object ID> in your .env file\n"
+                    "     so that requests are routed through /users/{user-id}."
                 ) from exc
         except ImportError:
             pass
@@ -1107,11 +1135,11 @@ class M365Client:
     # ── Microsoft ToDo / Tasks ────────────────────────────────────────────────
 
     def todo_list_task_lists(self):
-        url = f"{self._base_url()}/todo/lists"
+        url = f"{self._todo_base_url()}/todo/lists"
         try:
             data = self._graph_get(url)
         except Exception as exc:
-            self._raise_if_todo_401(exc)
+            self._raise_if_todo_401(exc, endpoint=url, user_id=self.user)
             raise
         return [
             {
@@ -1124,38 +1152,38 @@ class M365Client:
         ]
 
     def todo_create_task_list(self, name):
-        url = f"{self._base_url()}/todo/lists"
+        url = f"{self._todo_base_url()}/todo/lists"
         try:
             result = self._graph_post(url, {'displayName': name})
         except Exception as exc:
-            self._raise_if_todo_401(exc)
+            self._raise_if_todo_401(exc, endpoint=url, user_id=self.user)
             raise
         return f"Task list '{name}' created (ID: {result.get('id', '')})"
 
     def todo_rename_task_list(self, list_id, new_name):
-        url = f"{self._base_url()}/todo/lists/{list_id}"
+        url = f"{self._todo_base_url()}/todo/lists/{list_id}"
         try:
             self._graph_patch(url, {'displayName': new_name})
         except Exception as exc:
-            self._raise_if_todo_401(exc)
+            self._raise_if_todo_401(exc, endpoint=url, user_id=self.user)
             raise
         return f"Task list {list_id} renamed to '{new_name}'"
 
     def todo_delete_task_list(self, list_id):
-        url = f"{self._base_url()}/todo/lists/{list_id}"
+        url = f"{self._todo_base_url()}/todo/lists/{list_id}"
         try:
             self._graph_delete(url)
         except Exception as exc:
-            self._raise_if_todo_401(exc)
+            self._raise_if_todo_401(exc, endpoint=url, user_id=self.user)
             raise
         return f"Task list {list_id} deleted"
 
     def todo_list_tasks(self, list_id, due_after=None, due_before=None):
-        url = f"{self._base_url()}/todo/lists/{list_id}/tasks?$top=100&$expand=checklistItems"
+        url = f"{self._todo_base_url()}/todo/lists/{list_id}/tasks?$top=100&$expand=checklistItems"
         try:
             data = self._graph_get(url)
         except Exception as exc:
-            self._raise_if_todo_401(exc)
+            self._raise_if_todo_401(exc, endpoint=url, user_id=self.user)
             raise
         tasks = self._format_tasks(data.get('value', []))
         if due_after:
@@ -1165,10 +1193,11 @@ class M365Client:
         return tasks
 
     def todo_get_all_tasks(self, due_after=None, due_before=None):
+        url = f"{self._todo_base_url()}/todo/lists"
         try:
-            lists_data = self._graph_get(f"{self._base_url()}/todo/lists")
+            lists_data = self._graph_get(url)
         except Exception as exc:
-            self._raise_if_todo_401(exc)
+            self._raise_if_todo_401(exc, endpoint=url, user_id=self.user)
             raise
         all_tasks = []
         for lst in lists_data.get('value', []):
@@ -1222,11 +1251,11 @@ class M365Client:
         if reminder_datetime:
             task_data['reminderDateTime'] = {'dateTime': reminder_datetime, 'timeZone': 'UTC'}
             task_data['isReminderOn'] = True
-        url = f"{self._base_url()}/todo/lists/{list_id}/tasks"
+        url = f"{self._todo_base_url()}/todo/lists/{list_id}/tasks"
         try:
             result = self._graph_post(url, task_data)
         except Exception as exc:
-            self._raise_if_todo_401(exc)
+            self._raise_if_todo_401(exc, endpoint=url, user_id=self.user)
             raise
         return f"Task '{title}' created (ID: {result.get('id', '')})"
 
@@ -1244,53 +1273,53 @@ class M365Client:
             task_data['isReminderOn'] = True
         if not task_data:
             return "No fields to update – specify at least one option."
-        url = f"{self._base_url()}/todo/lists/{list_id}/tasks/{task_id}"
+        url = f"{self._todo_base_url()}/todo/lists/{list_id}/tasks/{task_id}"
         try:
             self._graph_patch(url, task_data)
         except Exception as exc:
-            self._raise_if_todo_401(exc)
+            self._raise_if_todo_401(exc, endpoint=url, user_id=self.user)
             raise
         return f"Task {task_id} updated"
 
     def todo_complete_task(self, list_id, task_id):
-        url = f"{self._base_url()}/todo/lists/{list_id}/tasks/{task_id}"
+        url = f"{self._todo_base_url()}/todo/lists/{list_id}/tasks/{task_id}"
         try:
             self._graph_patch(url, {'status': 'completed'})
         except Exception as exc:
-            self._raise_if_todo_401(exc)
+            self._raise_if_todo_401(exc, endpoint=url, user_id=self.user)
             raise
         return f"Task {task_id} marked as completed"
 
     def todo_add_step(self, list_id, task_id, step_title):
-        url = f"{self._base_url()}/todo/lists/{list_id}/tasks/{task_id}/checklistItems"
+        url = f"{self._todo_base_url()}/todo/lists/{list_id}/tasks/{task_id}/checklistItems"
         try:
             result = self._graph_post(url, {'displayName': step_title, 'isChecked': False})
         except Exception as exc:
-            self._raise_if_todo_401(exc)
+            self._raise_if_todo_401(exc, endpoint=url, user_id=self.user)
             raise
         return f"Step '{step_title}' added (ID: {result.get('id', '')})"
 
     def todo_complete_step(self, list_id, task_id, step_id):
         url = (
-            f"{self._base_url()}/todo/lists/{list_id}"
+            f"{self._todo_base_url()}/todo/lists/{list_id}"
             f"/tasks/{task_id}/checklistItems/{step_id}"
         )
         try:
             self._graph_patch(url, {'isChecked': True})
         except Exception as exc:
-            self._raise_if_todo_401(exc)
+            self._raise_if_todo_401(exc, endpoint=url, user_id=self.user)
             raise
         return f"Step {step_id} marked as completed"
 
     def todo_move_task(self, from_list_id, task_id, to_list_id):
         src_url = (
-            f"{self._base_url()}/todo/lists/{from_list_id}"
+            f"{self._todo_base_url()}/todo/lists/{from_list_id}"
             f"/tasks/{task_id}?$expand=checklistItems"
         )
         try:
             task = self._graph_get(src_url)
         except Exception as exc:
-            self._raise_if_todo_401(exc)
+            self._raise_if_todo_401(exc, endpoint=src_url, user_id=self.user)
             raise
 
         task_data = {'title': task.get('title', '')}
@@ -1304,17 +1333,17 @@ class M365Client:
         if task.get('status') == 'completed':
             task_data['status'] = 'completed'
 
-        dst_url = f"{self._base_url()}/todo/lists/{to_list_id}/tasks"
+        dst_url = f"{self._todo_base_url()}/todo/lists/{to_list_id}/tasks"
         try:
             new_task = self._graph_post(dst_url, task_data)
         except Exception as exc:
-            self._raise_if_todo_401(exc)
+            self._raise_if_todo_401(exc, endpoint=dst_url, user_id=self.user)
             raise
         new_task_id = new_task.get('id', '')
 
         for item in (task.get('checklistItems') or []):
             step_url = (
-                f"{self._base_url()}/todo/lists/{to_list_id}"
+                f"{self._todo_base_url()}/todo/lists/{to_list_id}"
                 f"/tasks/{new_task_id}/checklistItems"
             )
             self._graph_post(step_url, {
@@ -1323,7 +1352,7 @@ class M365Client:
             })
 
         self._graph_delete(
-            f"{self._base_url()}/todo/lists/{from_list_id}/tasks/{task_id}"
+            f"{self._todo_base_url()}/todo/lists/{from_list_id}/tasks/{task_id}"
         )
         return (
             f"Task moved from list {from_list_id} to {to_list_id} "
@@ -1333,33 +1362,33 @@ class M365Client:
 
     def todo_get_task(self, list_id, task_id):
         url = (
-            f"{self._base_url()}/todo/lists/{list_id}"
+            f"{self._todo_base_url()}/todo/lists/{list_id}"
             f"/tasks/{task_id}?$expand=checklistItems"
         )
         try:
             data = self._graph_get(url)
         except Exception as exc:
-            self._raise_if_todo_401(exc)
+            self._raise_if_todo_401(exc, endpoint=url, user_id=self.user)
             raise
         tasks = self._format_tasks([data])
         return tasks[0] if tasks else None
 
     def todo_delete_task(self, list_id, task_id):
-        url = f"{self._base_url()}/todo/lists/{list_id}/tasks/{task_id}"
+        url = f"{self._todo_base_url()}/todo/lists/{list_id}/tasks/{task_id}"
         try:
             self._graph_delete(url)
         except Exception as exc:
-            self._raise_if_todo_401(exc)
+            self._raise_if_todo_401(exc, endpoint=url, user_id=self.user)
             raise
         return f"Task {task_id} deleted"
 
     def todo_get_default_list_id(self):
         """Return the ID of the default task list using wellKnownListName, or the first list."""
-        url = f"{self._base_url()}/todo/lists?$select=id,displayName,wellKnownListName"
+        url = f"{self._todo_base_url()}/todo/lists?$select=id,displayName,wellKnownListName"
         try:
             data = self._graph_get(url)
         except Exception as exc:
-            self._raise_if_todo_401(exc)
+            self._raise_if_todo_401(exc, endpoint=url, user_id=self.user)
             raise
         lists = data.get('value', [])
         if not lists:

@@ -33,16 +33,13 @@ GRAPH_ME = f"{GRAPH_BASE}/me"
 # Delegated scopes required by this skill
 DELEGATED_SCOPES = [
     "User.Read",
-    "openid",
-    "profile",
-    "offline_access",
-    "Files.ReadWrite",
     "Mail.ReadWrite",
     "Mail.Send",
     "Calendars.ReadWrite",
     "Contacts.ReadWrite",
     "MailboxFolder.ReadWrite",
     "Tasks.ReadWrite",
+    "Files.ReadWrite",
     "Notes.ReadWrite",
     "Sites.ReadWrite.All",
     "Bookings.Manage.All",
@@ -52,7 +49,6 @@ DELEGATED_SCOPES = [
     "Chat.ReadWrite",
     "OnlineMeetings.ReadWrite",
 ]
-
 
 def _parse_excel_range(range_str):
     """Return (rows, cols) from a range such as 'A1' or 'A1:C3'."""

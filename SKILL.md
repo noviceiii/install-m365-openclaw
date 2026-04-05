@@ -68,6 +68,7 @@ After sign-in the app runs headless; tokens refresh automatically.
 | `mail-list --search TEXT` | Full-text search | `m365 mail-list --search "project update"` |
 | `mail-list --count` | Count messages only | `m365 mail-list --unread --count` |
 | `mail-send --to ADDR --subject TEXT --body TEXT` | Send an e-mail | `m365 mail-send --to boss@co.com --subject "Update" --body "Done"` |
+| `mail-send --to ADDR,ADDR --subject TEXT --body TEXT` | Send to multiple recipients | `m365 mail-send --to a@co.com,b@co.com --subject "Update" --body "Done"` |
 | `mail-send ... --cc ADDR` | Add CC | `m365 mail-send --to a@b.com --subject S --body B --cc c@b.com` |
 | `mail-send ... --bcc ADDR` | Add BCC | `m365 mail-send --to a@b.com --subject S --body B --bcc d@b.com` |
 | `mail-send ... --attach FILE` | Attach a file | `m365 mail-send --to a@b.com --subject S --body B --attach /path/f.pdf` |

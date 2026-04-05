@@ -37,6 +37,44 @@ _HTML_BODY_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Minimal e-mail address validator (compiled once at module level).
+# Intentionally simple: checks for non-whitespace chars, exactly one @, and a
+# dot in the domain part.  Full RFC 5322 compliance is not the goal here; we
+# only want to catch obvious typos before sending a malformed payload to Graph.
+_EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s.]+\.[^@\s]+$')
+
+
+def _build_recipients(addrs):
+    """Convert any combination of str / list-of-str to Graph API recipient objects.
+
+    Accepts:
+    - a single address string  (``"a@b.com"``)
+    - a comma-separated string (``"a@b.com,c@d.com"``)
+    - a list of address strings
+
+    Returns a list of ``{'emailAddress': {'address': …}}`` dicts ready for the
+    Graph API (``toRecipients``, ``ccRecipients``, ``bccRecipients`` fields).
+    Raises ``ValueError`` for entries that do not look like e-mail addresses.
+    """
+    if not addrs:
+        return []
+    if not isinstance(addrs, list):
+        addrs = [addrs]
+    result = []
+    for item in addrs:
+        for addr_str in str(item).split(','):
+            addr_str = addr_str.strip()
+            if not addr_str:
+                continue
+            if not _EMAIL_RE.match(addr_str):
+                raise ValueError(
+                    f"Invalid e-mail address: {addr_str!r}. "
+                    "Expected format: user@domain.tld"
+                )
+            result.append({'emailAddress': {'address': addr_str}})
+    return result
+
+
 # Delegated scopes required by this skill
 DELEGATED_SCOPES = [
     "User.Read",
@@ -224,36 +262,27 @@ class M365Client:
     def send_mail(self, to_address, subject, body, cc=None, bcc=None,
                   sensitivity='Normal', importance='Normal', attachments=None,
                   request_delivery_receipt=False, request_read_receipt=False):
-        # Build a robust list of Graph API recipient objects from any input type.
-        def _recipients(addrs):
-            if not addrs:
-                return []
-            if not isinstance(addrs, list):
-                addrs = [addrs]
-            result = []
-            for a in addrs:
-                addr_str = str(a).strip()
-                if addr_str:
-                    result.append({'emailAddress': {'address': addr_str}})
-            return result
-
         # Auto-detect content type: use HTML when the body looks like markup,
         # otherwise fall back to plain Text so the Graph API never rejects it.
         content_type = 'HTML' if _HTML_BODY_RE.search(body) else 'Text'
 
+        # Validate and build recipient lists once; reuse the result for the
+        # success message so we avoid redundant processing.
+        to_recipients = _build_recipients(to_address)
+
         message = {
             'subject': subject,
             'body': {'contentType': content_type, 'content': body},
-            'toRecipients': _recipients(to_address),
+            'toRecipients': to_recipients,
             'importance': importance,
             'sensitivity': sensitivity,
             'isDeliveryReceiptRequested': request_delivery_receipt,
             'isReadReceiptRequested': request_read_receipt,
         }
         if cc:
-            message['ccRecipients'] = _recipients(cc)
+            message['ccRecipients'] = _build_recipients(cc)
         if bcc:
-            message['bccRecipients'] = _recipients(bcc)
+            message['bccRecipients'] = _build_recipients(bcc)
 
         if attachments:
             att_list = attachments if isinstance(attachments, list) else [attachments]
@@ -282,8 +311,7 @@ class M365Client:
             self._raise_if_mail_403(exc)
             raise
 
-        recipients = to_address if isinstance(to_address, list) else [to_address]
-        return f"Email sent to {', '.join(str(r) for r in recipients)}"
+        return f"Email sent to {', '.join(r['emailAddress']['address'] for r in to_recipients)}"
 
     def list_mail(self, limit=20, folder='inbox', unread_only=False, sort='new-old',
                   search_by_email=None, search_by_subject=None, search=None,

@@ -411,7 +411,7 @@ def main():
             cc_list = [a.strip() for a in pargs.cc.split(',') if a.strip()]
             bcc_list = [a.strip() for a in pargs.bcc.split(',') if a.strip()]
             print(client.send_mail(
-                to_list if len(to_list) > 1 else to_list[0],
+                to_list,
                 pargs.subject, pargs.body,
                 cc=cc_list or None, bcc=bcc_list or None,
                 importance=pargs.priority,

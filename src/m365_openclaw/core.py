@@ -30,6 +30,13 @@ load_dotenv()
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 GRAPH_ME = f"{GRAPH_BASE}/me"
 
+# Regex for detecting HTML content in mail bodies (compiled once at module level).
+_HTML_BODY_RE = re.compile(
+    r'<(html|head|body|p|br|div|span|strong|em|a|ul|ol|li|h[1-6]|table|tr|td|th)'
+    r'[\s>/]',
+    re.IGNORECASE,
+)
+
 # Delegated scopes required by this skill
 DELEGATED_SCOPES = [
     "User.Read",
@@ -217,16 +224,26 @@ class M365Client:
     def send_mail(self, to_address, subject, body, cc=None, bcc=None,
                   sensitivity='Normal', importance='Normal', attachments=None,
                   request_delivery_receipt=False, request_read_receipt=False):
+        # Build a robust list of Graph API recipient objects from any input type.
         def _recipients(addrs):
             if not addrs:
                 return []
-            if isinstance(addrs, str):
+            if not isinstance(addrs, list):
                 addrs = [addrs]
-            return [{'emailAddress': {'address': a.strip()}} for a in addrs if a.strip()]
+            result = []
+            for a in addrs:
+                addr_str = str(a).strip()
+                if addr_str:
+                    result.append({'emailAddress': {'address': addr_str}})
+            return result
+
+        # Auto-detect content type: use HTML when the body looks like markup,
+        # otherwise fall back to plain Text so the Graph API never rejects it.
+        content_type = 'HTML' if _HTML_BODY_RE.search(body) else 'Text'
 
         message = {
             'subject': subject,
-            'body': {'contentType': 'HTML', 'content': body},
+            'body': {'contentType': content_type, 'content': body},
             'toRecipients': _recipients(to_address),
             'importance': importance,
             'sensitivity': sensitivity,
@@ -251,15 +268,22 @@ class M365Client:
                 })
             message['attachments'] = graph_atts
 
+        payload = {'message': message, 'saveToSentItems': True}
         url = f"{self._base_url()}/sendMail"
         try:
-            self._graph_post(url, {'message': message, 'saveToSentItems': True})
+            self._graph_post(url, payload)
         except Exception as exc:
+            # Print the full payload so the caller can diagnose exactly what
+            # was sent to the Graph API (only shown on error).
+            print(
+                f"DEBUG send_mail payload:\n{json.dumps(payload, indent=2, default=str)}",
+                file=sys.stderr,
+            )
             self._raise_if_mail_403(exc)
             raise
 
         recipients = to_address if isinstance(to_address, list) else [to_address]
-        return f"Email sent to {', '.join(recipients)}"
+        return f"Email sent to {', '.join(str(r) for r in recipients)}"
 
     def list_mail(self, limit=20, folder='inbox', unread_only=False, sort='new-old',
                   search_by_email=None, search_by_subject=None, search=None,

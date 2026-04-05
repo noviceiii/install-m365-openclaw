@@ -30,13 +30,6 @@ load_dotenv()
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 GRAPH_ME = f"{GRAPH_BASE}/me"
 
-# Regex for detecting HTML content in mail bodies (compiled once at module level).
-_HTML_BODY_RE = re.compile(
-    r'<(html|head|body|p|br|div|span|strong|em|a|ul|ol|li|h[1-6]|table|tr|td|th)'
-    r'[\s>/]',
-    re.IGNORECASE,
-)
-
 # Minimal e-mail address validator (compiled once at module level).
 # Intentionally simple: checks for non-whitespace chars, exactly one @, and a
 # dot in the domain part.  Full RFC 5322 compliance is not the goal here; we
@@ -261,10 +254,10 @@ class M365Client:
 
     def send_mail(self, to_address, subject, body, cc=None, bcc=None,
                   sensitivity='Normal', importance='Normal', attachments=None,
-                  request_delivery_receipt=False, request_read_receipt=False):
-        # Auto-detect content type: use HTML when the body looks like markup,
-        # otherwise fall back to plain Text so the Graph API never rejects it.
-        content_type = 'HTML' if _HTML_BODY_RE.search(body) else 'Text'
+                  request_delivery_receipt=False, request_read_receipt=False,
+                  content_type=None):
+        # Use the explicitly provided content type; default to plain Text.
+        content_type = content_type if content_type in ('HTML', 'Text') else 'Text'
 
         # Validate and build recipient lists once; reuse the result for the
         # success message so we avoid redundant processing.
@@ -616,10 +609,11 @@ class M365Client:
 
     def create_calendar_event(self, subject, start_iso, end_iso, body="", location="",
                               required_attendees=None, optional_attendees=None,
-                              is_private=False, reminder_minutes=None, attachment=None):
+                              is_private=False, reminder_minutes=None, attachment=None,
+                              body_content_type='HTML'):
         event_data = {
             'subject': subject,
-            'body': {'contentType': 'HTML', 'content': body},
+            'body': {'contentType': body_content_type, 'content': body},
             'start': {'dateTime': start_iso, 'timeZone': 'UTC'},
             'end': {'dateTime': end_iso, 'timeZone': 'UTC'},
             'sensitivity': 'private' if is_private else 'normal',

@@ -33,7 +33,9 @@ OpenClaw M365 CLI v0.5.0 – Microsoft 365 for agents (delegated / device-code a
       Send an e-mail.
       --to ADDR[,...]   Recipient(s), required
       --subject TEXT    Subject, required
-      --body TEXT       Body (plain text or HTML), required
+      --body TEXT       Body text, required
+      --html            Send body as HTML (contentType: HTML)
+      --text            Send body as plain text (contentType: Text, default)
       --cc ADDR[,...]   Carbon copy
       --bcc ADDR[,...]  Blind carbon copy
       --attach FILE     Attach a local file (repeat for multiple)
@@ -400,6 +402,11 @@ def main():
                                 help='Recipient(s), comma-separated')
             parser.add_argument('--subject', required=True)
             parser.add_argument('--body', required=True)
+            ct_group = parser.add_mutually_exclusive_group()
+            ct_group.add_argument('--html', action='store_true',
+                                  help='Send body as HTML (contentType: HTML)')
+            ct_group.add_argument('--text', action='store_true',
+                                  help='Send body as plain text (contentType: Text, default)')
             parser.add_argument('--cc', default='')
             parser.add_argument('--bcc', default='')
             parser.add_argument('--priority', default='Normal',
@@ -410,12 +417,14 @@ def main():
             to_list = [a.strip() for a in pargs.to.split(',') if a.strip()]
             cc_list = [a.strip() for a in pargs.cc.split(',') if a.strip()]
             bcc_list = [a.strip() for a in pargs.bcc.split(',') if a.strip()]
+            content_type = 'HTML' if pargs.html else 'Text'
             print(client.send_mail(
                 to_list,
                 pargs.subject, pargs.body,
                 cc=cc_list or None, bcc=bcc_list or None,
                 importance=pargs.priority,
                 attachments=pargs.attachments or None,
+                content_type=content_type,
             ))
 
         elif cmd == "mail-read":
@@ -506,6 +515,11 @@ def main():
             parser.add_argument('--end', required=True, dest='end_iso',
                                 help='End datetime (ISO 8601)')
             parser.add_argument('--body', default='', help='Event description')
+            ct_group = parser.add_mutually_exclusive_group()
+            ct_group.add_argument('--html', action='store_true',
+                                  help='Body as HTML (contentType: HTML, default)')
+            ct_group.add_argument('--text', action='store_true',
+                                  help='Body as plain text (contentType: Text)')
             parser.add_argument('--location', default='')
             parser.add_argument('--required', default='', dest='required_attendees')
             parser.add_argument('--optional', default='', dest='optional_attendees')
@@ -517,6 +531,7 @@ def main():
                        if e.strip()]
             opt_att = [e.strip() for e in pargs.optional_attendees.split(',')
                        if e.strip()]
+            body_content_type = 'Text' if pargs.text else 'HTML'
             print(client.create_calendar_event(
                 pargs.subject, pargs.start_iso, pargs.end_iso,
                 body=pargs.body, location=pargs.location,
@@ -525,6 +540,7 @@ def main():
                 is_private=pargs.private,
                 reminder_minutes=pargs.reminder,
                 attachment=pargs.attach,
+                body_content_type=body_content_type,
             ))
 
         elif cmd == "calendar-read":
@@ -968,6 +984,11 @@ def main():
             parser.add_argument('to')
             parser.add_argument('subject')
             parser.add_argument('body')
+            ct_group = parser.add_mutually_exclusive_group()
+            ct_group.add_argument('--html', action='store_true',
+                                  help='Send body as HTML (contentType: HTML)')
+            ct_group.add_argument('--text', action='store_true',
+                                  help='Send body as plain text (contentType: Text, default)')
             parser.add_argument('--cc', default='')
             parser.add_argument('--bcc', default='')
             parser.add_argument('--importance', choices=['High', 'Normal', 'Low'],
@@ -983,6 +1004,7 @@ def main():
             to_list = [a.strip() for a in pargs.to.split(',') if a.strip()]
             cc_list = [a.strip() for a in pargs.cc.split(',') if a.strip()]
             bcc_list = [a.strip() for a in pargs.bcc.split(',') if a.strip()]
+            content_type = 'HTML' if pargs.html else 'Text'
             print(client.send_mail(
                 to_list if len(to_list) > 1 else to_list[0],
                 pargs.subject, pargs.body,
@@ -991,6 +1013,7 @@ def main():
                 attachments=pargs.attachments or None,
                 request_delivery_receipt=pargs.delivery_receipt,
                 request_read_receipt=pargs.read_receipt,
+                content_type=content_type,
             ))
 
         elif cmd == "mail-search":

@@ -67,7 +67,9 @@ After sign-in the app runs headless; tokens refresh automatically.
 | `mail-list --search-by-subject TEXT` | Filter by subject | `m365 mail-list --search-by-subject Invoice` |
 | `mail-list --search TEXT` | Full-text search | `m365 mail-list --search "project update"` |
 | `mail-list --count` | Count messages only | `m365 mail-list --unread --count` |
-| `mail-send --to ADDR --subject TEXT --body TEXT` | Send an e-mail | `m365 mail-send --to boss@co.com --subject "Update" --body "Done"` |
+| `mail-send --to ADDR --subject TEXT --body TEXT` | Send an e-mail (plain text, default) | `m365 mail-send --to boss@co.com --subject "Update" --body "Done"` |
+| `mail-send ... --html` | Send body as HTML | `m365 mail-send --to boss@co.com --subject "Hi" --body "<b>Hello</b>" --html` |
+| `mail-send ... --text` | Send body as plain text (explicit) | `m365 mail-send --to boss@co.com --subject "Hi" --body "Hello" --text` |
 | `mail-send --to ADDR,ADDR --subject TEXT --body TEXT` | Send to multiple recipients | `m365 mail-send --to a@co.com,b@co.com --subject "Update" --body "Done"` |
 | `mail-send ... --cc ADDR` | Add CC | `m365 mail-send --to a@b.com --subject S --body B --cc c@b.com` |
 | `mail-send ... --bcc ADDR` | Add BCC | `m365 mail-send --to a@b.com --subject S --body B --bcc d@b.com` |
@@ -95,7 +97,9 @@ After sign-in the app runs headless; tokens refresh automatically.
 |---------|-------------|---------|
 | `calendar-list [N]` | List upcoming events (N = days, default 7) | `m365 calendar-list 14` |
 | `calendar-create --subject TEXT --start ISO --end ISO` | Create event | `m365 calendar-create --subject Meeting --start 2026-04-10T10:00 --end 2026-04-10T11:00` |
-| `calendar-create ... --body TEXT` | Add description | `m365 calendar-create --subject S --start T1 --end T2 --body "Q1 review"` |
+| `calendar-create ... --body TEXT` | Add description (HTML by default) | `m365 calendar-create --subject S --start T1 --end T2 --body "Q1 review"` |
+| `calendar-create ... --body TEXT --text` | Add description as plain text | `m365 calendar-create --subject S --start T1 --end T2 --body "Q1 review" --text` |
+| `calendar-create ... --body TEXT --html` | Add description as HTML (explicit) | `m365 calendar-create --subject S --start T1 --end T2 --body "<b>Q1</b>" --html` |
 | `calendar-create ... --location TEXT` | Set location | `m365 calendar-create --subject S --start T1 --end T2 --location "Room 101"` |
 | `calendar-create ... --required EMAIL` | Add required attendee | `m365 calendar-create --subject S --start T1 --end T2 --required alice@co.com` |
 | `calendar-create ... --optional EMAIL` | Add optional attendee | `m365 calendar-create --subject S --start T1 --end T2 --optional bob@co.com` |

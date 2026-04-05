@@ -113,9 +113,11 @@ After sign-in the app runs headless; tokens refresh automatically.
 
 | Command | Description | Example |
 |---------|-------------|---------|
-| `contact-list [N]` | List N contacts (default 100) | `m365 contact-list` |
+| `contact-list [N]` | List N contacts with ID as first column (default 100) | `m365 contact-list` |
 | `contact-list --sort by-last\|by-first` | Sort contacts | `m365 contact-list --sort by-last` |
 | `contact-list --count` | Count contacts | `m365 contact-list --count` |
+| `contact-list --id-only` | Print only contact IDs, one per line (for scripting) | `m365 contact-list --id-only` |
+| `contact-list --short` | Print ID, First Name, Last Name and Work Phone only | `m365 contact-list --short` |
 | `contact-read \<id\>` | Show all fields of a contact | `m365 contact-read AAMk...` |
 | `contact-edit \<id\> [--field VALUE ...]` | Update contact fields | `m365 contact-edit AAMk... --email-business neu@domain.ch` |
 | `contact-create \<first\> \<last\> [options]` | Create new contact | `m365 contact-create Jane Doe --email-business j@work.com` |
@@ -258,6 +260,8 @@ The following legacy command names are still supported:
 - Chat and Meetings require a Microsoft 365 license that includes Teams
 - Bookings requires a Microsoft Bookings license in the tenant
 - `--count` flag is available on mail-list, contact-list, and task-list
+- `--id-only` flag on contact-list prints only IDs (one per line), useful for scripting
+- `--short` flag on contact-list prints ID, First Name, Last Name and Work Phone for compact view
 - `onedrive-share --anyone` creates an anonymous link; omitting `--anyone` creates an org link
 - Excel update uses Graph API directly; file must not be open in Office
 - Word and PowerPoint use download → edit locally → re-upload workflow

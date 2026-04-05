@@ -573,6 +573,10 @@ def main():
             parser.add_argument('--sort', default=None,
                                 choices=['by-last', 'by-first'])
             parser.add_argument('--count', action='store_true')
+            parser.add_argument('--id-only', action='store_true',
+                                help='Print only contact IDs, one per line')
+            parser.add_argument('--short', action='store_true',
+                                help='Print ID, First Name, Last Name and Work Phone only')
             pargs = parser.parse_args(args)
             contacts = client.list_contacts(limit=pargs.limit)
             if pargs.sort == 'by-last':
@@ -583,16 +587,30 @@ def main():
                 print(f"Count: {len(contacts)}")
             elif not contacts:
                 print("No contacts found.")
+            elif pargs.id_only:
+                for c in contacts:
+                    print(c['id'])
+            elif pargs.short:
+                header = (
+                    f"{'ID':<48} {'First':<15} {'Last':<15} {'Work Phone'}"
+                )
+                print(header)
+                print("-" * len(header))
+                for c in contacts:
+                    print(
+                        f"{c['id']:<48} {c['first_name']:<15} "
+                        f"{c['last_name']:<15} {c['work_phone']}"
+                    )
             else:
                 header = (
-                    f"{'First':<15} {'Last':<15} {'Work Email':<30} "
+                    f"{'ID':<48} {'First':<15} {'Last':<15} {'Work Email':<30} "
                     f"{'Home Email':<25} {'Work Phone':<18} {'Mobile'}"
                 )
                 print(header)
                 print("-" * len(header))
                 for c in contacts:
                     print(
-                        f"{c['first_name']:<15} {c['last_name']:<15} "
+                        f"{c['id']:<48} {c['first_name']:<15} {c['last_name']:<15} "
                         f"{c['work_email']:<30} {c['home_email']:<25} "
                         f"{c['work_phone']:<18} {c['mobile_phone']}"
                     )

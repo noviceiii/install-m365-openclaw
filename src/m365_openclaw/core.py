@@ -125,6 +125,9 @@ class M365Client:
         # Required for application-permission mail sending (client-credentials flow).
         self.client_secret = os.getenv("CLIENT_SECRET")
         self.mail_sender_upn = os.getenv("MAIL_SENDER_UPN")
+        # Lazily initialised in _app_access_token(); reusing the instance lets
+        # MSAL cache the application token internally for its lifetime.
+        self._msal_app_confidential = None
 
         if not all([self.tenant_id, self.client_id]):
             raise EnvironmentError(
@@ -213,6 +216,9 @@ class M365Client:
         POST /users/{MAIL_SENDER_UPN}/sendMail.  Application permissions are
         required because Exchange Online reliably rejects delegated /me/sendMail
         requests from unattended service applications with HTTP 400.
+
+        The ConfidentialClientApplication instance is cached so that MSAL can
+        reuse the token internally for its full lifetime (~60-90 minutes).
         """
         if not self.client_secret:
             raise EnvironmentError(
@@ -226,12 +232,13 @@ class M365Client:
                 "Set MAIL_SENDER_UPN to the UPN or e-mail address of the mailbox\n"
                 "to send from, e.g. MAIL_SENDER_UPN=sender@example.com"
             )
-        app = msal.ConfidentialClientApplication(
-            self.client_id,
-            authority=f"https://login.microsoftonline.com/{self.tenant_id}",
-            client_credential=self.client_secret,
-        )
-        result = app.acquire_token_for_client(
+        if self._msal_app_confidential is None:
+            self._msal_app_confidential = msal.ConfidentialClientApplication(
+                self.client_id,
+                authority=f"https://login.microsoftonline.com/{self.tenant_id}",
+                client_credential=self.client_secret,
+            )
+        result = self._msal_app_confidential.acquire_token_for_client(
             scopes=["https://graph.microsoft.com/.default"]
         )
         if "access_token" not in result:
@@ -244,7 +251,6 @@ class M365Client:
                 "the Mail.Send application permission is granted and admin-consented."
             )
         return result["access_token"]
-
     # ── low-level HTTP helpers ────────────────────────────────────────────────
 
     def _graph_headers(self, content_type='application/json', token=None):
@@ -259,8 +265,9 @@ class M365Client:
         resp.raise_for_status()
         return resp.json() if resp.content else {}
 
-    def _graph_post(self, url, data=None, content_type='application/json', raw_data=None):
-        headers = self._graph_headers(content_type=content_type)
+    def _graph_post(self, url, data=None, content_type='application/json', raw_data=None,
+                    token=None):
+        headers = self._graph_headers(content_type=content_type, token=token)
         if raw_data is not None:
             resp = requests.post(url, headers=headers, data=raw_data, timeout=30)
         else:
@@ -353,10 +360,8 @@ class M365Client:
         # application token obtained via client-credentials flow.
         app_token = self._app_access_token()
         url = f"{GRAPH_BASE}/users/{self.mail_sender_upn}/sendMail"
-        headers = self._graph_headers(token=app_token)
         try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=30)
-            resp.raise_for_status()
+            self._graph_post(url, payload, token=app_token)
         except Exception as exc:
             # Print the full Graph error response for diagnosability.
             print(

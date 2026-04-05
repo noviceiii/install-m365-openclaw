@@ -30,6 +30,13 @@ load_dotenv()
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 GRAPH_ME = f"{GRAPH_BASE}/me"
 
+# Regex for detecting HTML content in mail bodies (compiled once at module level).
+_HTML_BODY_RE = re.compile(
+    r'<(html|head|body|p|br|div|span|strong|em|a|ul|ol|li|h[1-6]|table|tr|td|th)'
+    r'[\s>/]',
+    re.IGNORECASE,
+)
+
 # Delegated scopes required by this skill
 DELEGATED_SCOPES = [
     "User.Read",
@@ -232,12 +239,7 @@ class M365Client:
 
         # Auto-detect content type: use HTML when the body looks like markup,
         # otherwise fall back to plain Text so the Graph API never rejects it.
-        _html_pattern = re.compile(
-            r'<(html|head|body|p|br|div|span|strong|em|a|ul|ol|li|h[1-6]|table|tr|td|th)'
-            r'[\s>/]',
-            re.IGNORECASE,
-        )
-        content_type = 'HTML' if _html_pattern.search(body) else 'Text'
+        content_type = 'HTML' if _HTML_BODY_RE.search(body) else 'Text'
 
         message = {
             'subject': subject,

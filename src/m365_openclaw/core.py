@@ -125,7 +125,7 @@ class M365Client:
         # Required for application-permission mail sending (client-credentials flow).
         self.client_secret = os.getenv("CLIENT_SECRET")
         self.mail_sender_upn = os.getenv("MAIL_SENDER_UPN")
-        # Lazily initialised in _app_access_token(); reusing the instance lets
+        # Lazily initialized in _app_access_token(); reusing the instance lets
         # MSAL cache the application token internally for its lifetime.
         self._msal_app_confidential = None
 

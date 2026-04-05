@@ -127,6 +127,7 @@ After sign-in the app runs headless; tokens refresh automatically.
 | `contactlist-list` | List contact folders | `m365 contactlist-list` |
 | `contactlist-create \<name\>` | Create contact folder | `m365 contactlist-create Kunden2026` |
 | `contactlist-delete \<id\>` | Delete contact folder | `m365 contactlist-delete AAMk...` |
+| `contact-delete \<id\>` | Delete a contact by ID | `m365 contact-delete AAMk...` |
 
 ### Tasks
 

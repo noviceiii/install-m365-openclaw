@@ -932,6 +932,11 @@ class M365Client:
         self._graph_delete(url)
         return f"Contact folder {folder_id} deleted"
 
+    def delete_contact(self, contact_id):
+        url = f"{self._base_url()}/contacts/{contact_id}"
+        self._graph_delete(url)
+        return f"Contact {contact_id} deleted"
+
     # ── OneDrive ─────────────────────────────────────────────────────────────
 
     def onedrive_list(self, folder_path="/"):

@@ -738,6 +738,12 @@ def main():
                 sys.exit(1)
             print(client.delete_contact_folder(args[0]))
 
+        elif cmd == "contact-delete":
+            if not args:
+                print("Usage: m365 contact-delete <contact_id>")
+                sys.exit(1)
+            print(client.delete_contact(args[0]))
+
         # ── Tasks ─────────────────────────────────────────────────────────────
 
         elif cmd == "task-list":

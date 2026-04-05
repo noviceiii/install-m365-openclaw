@@ -592,7 +592,7 @@ def main():
                     print(c['id'])
             elif pargs.short:
                 header = (
-                    f"{'ID':<48} {'First':<15} {'Last':<15} {'Work Phone'}"
+                    f"{'ID':<48} {'First':<15} {'Last':<15} {'Work Phone':<18}"
                 )
                 print(header)
                 print("-" * len(header))

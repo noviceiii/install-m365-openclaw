@@ -301,7 +301,14 @@ class M365Client:
                 f"DEBUG send_mail payload:\n{json.dumps(payload, indent=2, default=str)}",
                 file=sys.stderr,
             )
-            self._raise_if_mail_403(exc)
+            if (isinstance(exc, requests.exceptions.HTTPError)
+                    and exc.response.status_code == 403):
+                raise PermissionError(
+                    "Mail.Send denied by Exchange Online (HTTP 403).\n"
+                    "Ensure the Entra app has the delegated 'Mail.Send' permission\n"
+                    "and that Exchange Online RBAC for Applications includes\n"
+                    "'Application Mail.Send' for the app's service principal."
+                ) from exc
             raise
 
         return f"Email sent to {', '.join(r['emailAddress']['address'] for r in to_recipients)}"

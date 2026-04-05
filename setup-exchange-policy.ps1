@@ -281,6 +281,27 @@ if ($PolicyMode -eq "RBAC") {
         Write-Host "  Role assignment already exists – skipping." -ForegroundColor Green
     }
 
+    # 4f. Assign the Application Mail.Send role within the same scope
+    $sendAssignmentName = "OpenClaw-MailSend-" + $AppId.Substring(0, [Math]::Min(8, $AppId.Length))
+    Write-Host "  Creating role assignment '$sendAssignmentName' (Mail.Send)..." -ForegroundColor Gray
+    $existingSendAssignment = Get-ManagementRoleAssignment -Identity $sendAssignmentName -ErrorAction SilentlyContinue
+    if (-not $existingSendAssignment) {
+        try {
+            New-ManagementRoleAssignment `
+                -Name $sendAssignmentName `
+                -App  $AppId `
+                -Role "Application Mail.Send" `
+                -CustomResourceScope $scopeName `
+                -ErrorAction Stop
+            Write-Host "  Mail.Send role assignment created." -ForegroundColor Green
+        } catch {
+            Write-Error "  Failed to create role assignment '$sendAssignmentName': $($_.Exception.Message)"
+            exit 1
+        }
+    } else {
+        Write-Host "  Mail.Send role assignment already exists – skipping." -ForegroundColor Green
+    }
+
 } else {
 
     # ---- Legacy Application Access Policy (deprecated) ----------------------

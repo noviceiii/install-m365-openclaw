@@ -2,7 +2,7 @@
 
 OpenClaw skill for unattended Microsoft 365 access via Graph API.
 
-**Version:** 0.5.0 (Delegated Permissions – Device-Code Flow)
+**Version:** 0.5.0 (Hybrid: Delegated Device-Code + Application Client-Credentials)
 
 ## Executable
 m365
@@ -11,21 +11,32 @@ m365
 Enables OpenClaw agents to send/read mail, manage calendar events, manage contacts,
 access OneDrive files, create OneNote pages, edit Excel/Word/PowerPoint documents,
 manage Microsoft To Do tasks, create Teams chats, schedule online meetings, manage
-Bookings appointments, and list SharePoint sites. Uses delegated (device-code) flow:
-the user signs in once interactively; the app then works fully headless using cached
-refresh tokens via `GET /me/…`.
+Bookings appointments, and list SharePoint sites.
+
+Two authentication flows are used:
+- **Delegated (device-code)** – for all features except mail sending. The user signs
+  in once interactively; the app then works fully headless using cached refresh tokens
+  via `GET /me/…`.
+- **Application (client-credentials)** – used exclusively for `mail-send`. Exchange
+  Online requires `POST /users/{UPN}/sendMail` with an application token to reliably
+  send mail from unattended service applications. This flow requires `CLIENT_SECRET`
+  and `MAIL_SENDER_UPN` in `.env`.
 
 ## Configuration
 Credentials stored in: ~/.openclaw/skills/m365-graph/.env
 
-Required environment variables:
+Required environment variables (all features):
 - TENANT_ID
 - CLIENT_ID
 - TOKEN_CACHE_PATH
 
-No `CLIENT_SECRET` is needed – the skill uses delegated (device-code) authentication.
+Additional variables required for `mail-send` only:
+- CLIENT_SECRET   – app client secret (application/client-credentials flow)
+- MAIL_SENDER_UPN – UPN or e-mail of the mailbox to send from (e.g. sender@example.com)
 
-## Required Microsoft Graph Permissions (Delegated)
+## Required Microsoft Graph Permissions
+
+### Delegated permissions (device-code flow – all features except mail sending)
 
 All permissions below must be added as **delegated** permissions in Entra ID and
 granted admin consent:
@@ -37,6 +48,17 @@ granted admin consent:
 `Sites.ReadWrite.All`,
 `Bookings.Manage.All`, `Bookings.ReadWrite.All`, `BookingsAppointment.ReadWrite.All`,
 `Chat.Create`, `Chat.ReadWrite`, `OnlineMeetings.ReadWrite`
+
+### Application permissions (client-credentials flow – mail sending only)
+
+Add the following as an **application** permission in Entra ID and grant admin consent:
+
+`Mail.Send`
+
+> **Note:** The `sensitivity` field is intentionally excluded from `mail-send`
+> payloads. Microsoft Graph v1.0 does not support `sensitivity` on
+> `microsoft.graph.message` for the `sendMail` action, and Exchange Online returns
+> HTTP 400 when it is present.
 
 ## First-Time Setup
 
@@ -259,10 +281,14 @@ The following legacy command names are still supported:
 | `todo-move-task <src> <task-id> <dst>` | *(still supported directly)* |
 
 ## Notes
-- Authentication uses delegated (device-code) flow – no client secret required
+- Authentication is a hybrid model: delegated (device-code) for most features;
+  application (client-credentials) for `mail-send` only
+- `mail-send` requires `CLIENT_SECRET` and `MAIL_SENDER_UPN` in `.env` and the
+  `Mail.Send` application permission granted in Entra ID
 - Run `m365 auth-login` for initial setup or after token expiry
 - Tokens are cached and auto-refreshed; re-auth needed only after ~90 days of inactivity
-- All API calls use `/me/…` endpoints – no M365_USER_EMAIL required
+- All read/manage API calls use `/me/…` endpoints;
+  mail sending uses `/users/{UPN}/sendMail`
 - Chat and Meetings require a Microsoft 365 license that includes Teams
 - Bookings requires a Microsoft Bookings license in the tenant
 - `--count` flag is available on mail-list, contact-list, and task-list

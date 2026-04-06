@@ -31,6 +31,7 @@ import sys
 import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Union
 
 import msal
 import requests
@@ -314,14 +315,13 @@ class M365Client:
     # ── Mail ──────────────────────────────────────────────────────────────────
 
     def send_mail(self, to_address, subject, body, cc=None, bcc=None,
-                  sensitivity='Normal', importance='Normal', attachments=None,
+                  importance='Normal', attachments=None,
                   request_delivery_receipt=False, request_read_receipt=False,
-                  content_type=None):
+                  content_type=None, debug: bool = False) -> Union[str, dict]:
         # Use the explicitly provided content type; default to plain Text.
         content_type = content_type if content_type in ('HTML', 'Text') else 'Text'
 
-        # Validate and build recipient lists once; reuse the result for the
-        # success message so we avoid redundant processing.
+        # Validate and build recipient lists once.
         to_recipients = _build_recipients(to_address)
 
         message = {
@@ -329,7 +329,7 @@ class M365Client:
             'body': {'contentType': content_type, 'content': body},
             'toRecipients': to_recipients,
             'importance': importance,
-            'sensitivity': sensitivity,
+            # sensitivity is intentionally omitted – Exchange Online rejects it.
             'isDeliveryReceiptRequested': request_delivery_receipt,
             'isReadReceiptRequested': request_read_receipt,
         }
@@ -360,48 +360,31 @@ class M365Client:
         # application token obtained via client-credentials flow.
         app_token = self._app_access_token()
         url = f"{GRAPH_BASE}/users/{self.mail_sender_upn}/sendMail"
-        try:
-            self._graph_post(url, payload, token=app_token)
-        except Exception as exc:
-            # Print the full Graph error response for diagnosability.
-            print(
-                f"DEBUG send_mail payload:\n{json.dumps(payload, indent=2, default=str)}",
-                file=sys.stderr,
-            )
-            if isinstance(exc, requests.exceptions.HTTPError):
-                status = exc.response.status_code
-                try:
-                    err_body = exc.response.json()
-                    err_msg = json.dumps(err_body, indent=2)
-                except Exception:
-                    err_msg = exc.response.text
-                print(
-                    f"DEBUG Graph error response (HTTP {status}):\n{err_msg}",
-                    file=sys.stderr,
-                )
-                if status == 401:
-                    raise PermissionError(
-                        f"Authentication failed (HTTP 401) when sending mail.\n"
-                        f"Check CLIENT_ID, CLIENT_SECRET, and TENANT_ID in .env.\n"
-                        f"Graph error: {err_msg}"
-                    ) from exc
-                if status == 403:
-                    raise PermissionError(
-                        f"Mail.Send denied (HTTP 403).\n"
-                        f"Ensure the app has the Mail.Send application permission\n"
-                        f"granted and admin-consented in Entra ID → App registrations.\n"
-                        f"Graph error: {err_msg}"
-                    ) from exc
-                if status == 400:
-                    raise RuntimeError(
-                        f"Exchange Online rejected the send-mail request (HTTP 400).\n"
-                        f"Check MAIL_SENDER_UPN ('{self.mail_sender_upn}') and verify\n"
-                        f"the mailbox exists and is a valid UserMailbox.\n"
-                        f"Graph error: {err_msg}"
-                    ) from exc
-            raise
+        headers = self._graph_headers(content_type='application/json', token=app_token)
+        response = requests.post(url, headers=headers, json=payload, timeout=30)
 
-        return f"Email sent to {', '.join(r['emailAddress']['address'] for r in to_recipients)}"
+        if response.status_code == 202:
+            if debug:
+                return {
+                    "status": 202,
+                    "endpoint": f"/users/{self.mail_sender_upn}/sendMail",
+                    "message": "accepted",
+                }
+            return "Mail successfully accepted by Exchange Online (202 Accepted)."
+
+        error_body = {}
+        try:
+            error_body = response.json() if response.content else {}
+        except Exception:
+            pass
+        if debug:
+            return {"status": response.status_code, "error": error_body}
+        error_code = (error_body.get('error') or {}).get('code', '')
+        suffix = f" – {error_code}" if error_code else ""
+        return (
+            f"Mail sending failed: Exchange Online rejected the request "
+            f"(HTTP {response.status_code}{suffix})."
+        )
 
     def list_mail(self, limit=20, folder='inbox', unread_only=False, sort='new-old',
                   search_by_email=None, search_by_subject=None, search=None,

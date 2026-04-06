@@ -31,6 +31,7 @@ import sys
 import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Union
 
 import msal
 import requests
@@ -316,7 +317,7 @@ class M365Client:
     def send_mail(self, to_address, subject, body, cc=None, bcc=None,
                   importance='Normal', attachments=None,
                   request_delivery_receipt=False, request_read_receipt=False,
-                  content_type=None, debug: bool = False) -> 'str | dict':
+                  content_type=None, debug: bool = False) -> Union[str, dict]:
         # Use the explicitly provided content type; default to plain Text.
         content_type = content_type if content_type in ('HTML', 'Text') else 'Text'
 
@@ -371,12 +372,18 @@ class M365Client:
                 }
             return "Mail successfully accepted by Exchange Online (202 Accepted)."
 
-        error_body = response.json() if response.content else {}
+        error_body = {}
+        try:
+            error_body = response.json() if response.content else {}
+        except Exception:
+            pass
         if debug:
             return {"status": response.status_code, "error": error_body}
+        error_code = (error_body.get('error') or {}).get('code', '')
+        suffix = f" – {error_code}" if error_code else ""
         return (
             f"Mail sending failed: Exchange Online rejected the request "
-            f"(HTTP {response.status_code})."
+            f"(HTTP {response.status_code}{suffix})."
         )
 
     def list_mail(self, limit=20, folder='inbox', unread_only=False, sort='new-old',

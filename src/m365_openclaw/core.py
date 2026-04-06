@@ -3,13 +3,24 @@ core.py – Microsoft 365 client for OpenClaw agents (v0.5.0).
 
 Supports: Mail, Calendar, Contacts, OneDrive, OneNote, Excel, Word, PowerPoint,
           Microsoft ToDo tasks, Teams Chats, Online Meetings, Bookings, Sites.
-Uses delegated (device code) flow via MSAL with SerializableTokenCache for
-headless operation after initial sign-in.
 
-Authentication: On first run the user opens https://microsoft.com/devicelogin
-on any device and enters the displayed code. The app then receives an access
-token plus a refresh token. All subsequent runs are fully headless – MSAL
-silently exchanges the refresh token for a fresh access token as needed.
+Authentication – two flows are used:
+
+1. Delegated (device-code) flow – used for all interactive features:
+   Calendar, Contacts, OneDrive, OneNote, Tasks, Teams, Bookings, Sites, and
+   reading/managing mail folders.
+   On first run the user opens https://microsoft.com/devicelogin on any device
+   and enters the displayed code. Subsequent runs are fully headless – MSAL
+   silently exchanges the refresh token for a fresh access token as needed.
+
+2. Application (client-credentials) flow – used exclusively for sending mail:
+   POST /users/{MAIL_SENDER_UPN}/sendMail
+   Microsoft Exchange Online does not reliably accept delegated /me/sendMail
+   requests from unattended applications (HTTP 400 before transport).  The
+   only supported and documented solution is to use application permissions
+   (Mail.Send application permission, client-credentials flow) and send mail
+   explicitly as a named user.  See the GitHub issue for full background.
+   Required configuration: CLIENT_SECRET and MAIL_SENDER_UPN in .env.
 """
 
 import base64
@@ -111,6 +122,12 @@ class M365Client:
         self.tenant_id = os.getenv("TENANT_ID")
         self.client_id = os.getenv("CLIENT_ID")
         self.token_cache_path = os.getenv("TOKEN_CACHE_PATH")
+        # Required for application-permission mail sending (client-credentials flow).
+        self.client_secret = os.getenv("CLIENT_SECRET")
+        self.mail_sender_upn = os.getenv("MAIL_SENDER_UPN")
+        # Lazily initialized in _app_access_token(); reusing the instance lets
+        # MSAL cache the application token internally for its lifetime.
+        self._msal_app_confidential = None
 
         if not all([self.tenant_id, self.client_id]):
             raise EnvironmentError(
@@ -192,10 +209,53 @@ class M365Client:
             "Run:  m365 auth-login  to re-authenticate via device code."
         )
 
+    def _app_access_token(self):
+        """Return an application-permission access token via client-credentials flow.
+
+        This token is used exclusively for mail sending via
+        POST /users/{MAIL_SENDER_UPN}/sendMail.  Application permissions are
+        required because Exchange Online reliably rejects delegated /me/sendMail
+        requests from unattended service applications with HTTP 400.
+
+        The ConfidentialClientApplication instance is cached so that MSAL can
+        reuse the token internally for its full lifetime (~60-90 minutes).
+        """
+        if not self.client_secret:
+            raise EnvironmentError(
+                "CLIENT_SECRET is not set in .env.\n"
+                "Mail sending requires application permissions (client-credentials flow).\n"
+                "Add CLIENT_SECRET to ~/.openclaw/skills/m365-graph/.env."
+            )
+        if not self.mail_sender_upn:
+            raise EnvironmentError(
+                "MAIL_SENDER_UPN is not set in .env.\n"
+                "Set MAIL_SENDER_UPN to the UPN or e-mail address of the mailbox\n"
+                "to send from, e.g. MAIL_SENDER_UPN=sender@example.com"
+            )
+        if self._msal_app_confidential is None:
+            self._msal_app_confidential = msal.ConfidentialClientApplication(
+                self.client_id,
+                authority=f"https://login.microsoftonline.com/{self.tenant_id}",
+                client_credential=self.client_secret,
+            )
+        result = self._msal_app_confidential.acquire_token_for_client(
+            scopes=["https://graph.microsoft.com/.default"]
+        )
+        if "access_token" not in result:
+            error = result.get("error", "unknown_error")
+            desc = result.get("error_description", "")
+            raise RuntimeError(
+                f"Failed to acquire application token for mail sending.\n"
+                f"Error: {error} – {desc}\n"
+                "Check CLIENT_ID, CLIENT_SECRET, TENANT_ID in .env and ensure\n"
+                "the Mail.Send application permission is granted and admin-consented."
+            )
+        return result["access_token"]
     # ── low-level HTTP helpers ────────────────────────────────────────────────
 
-    def _graph_headers(self, content_type='application/json'):
-        headers = {'Authorization': f'Bearer {self._access_token()}'}
+    def _graph_headers(self, content_type='application/json', token=None):
+        tok = token if token is not None else self._access_token()
+        headers = {'Authorization': f'Bearer {tok}'}
         if content_type:
             headers['Content-Type'] = content_type
         return headers
@@ -205,8 +265,9 @@ class M365Client:
         resp.raise_for_status()
         return resp.json() if resp.content else {}
 
-    def _graph_post(self, url, data=None, content_type='application/json', raw_data=None):
-        headers = self._graph_headers(content_type=content_type)
+    def _graph_post(self, url, data=None, content_type='application/json', raw_data=None,
+                    token=None):
+        headers = self._graph_headers(content_type=content_type, token=token)
         if raw_data is not None:
             resp = requests.post(url, headers=headers, data=raw_data, timeout=30)
         else:
@@ -291,24 +352,53 @@ class M365Client:
             message['attachments'] = graph_atts
 
         payload = {'message': message, 'saveToSentItems': True}
-        url = f"{self._base_url()}/sendMail"
+
+        # Use application-permission flow for mail sending.
+        # Exchange Online reliably rejects delegated /me/sendMail from unattended
+        # service applications with HTTP 400 (before transport, so no trace exists).
+        # The Microsoft-recommended solution is POST /users/{UPN}/sendMail with an
+        # application token obtained via client-credentials flow.
+        app_token = self._app_access_token()
+        url = f"{GRAPH_BASE}/users/{self.mail_sender_upn}/sendMail"
         try:
-            self._graph_post(url, payload)
+            self._graph_post(url, payload, token=app_token)
         except Exception as exc:
-            # Print the full payload so the caller can diagnose exactly what
-            # was sent to the Graph API (only shown on error).
+            # Print the full Graph error response for diagnosability.
             print(
                 f"DEBUG send_mail payload:\n{json.dumps(payload, indent=2, default=str)}",
                 file=sys.stderr,
             )
-            if (isinstance(exc, requests.exceptions.HTTPError)
-                    and exc.response.status_code == 403):
-                raise PermissionError(
-                    "Mail.Send denied by Exchange Online (HTTP 403).\n"
-                    "Ensure the Entra app has the delegated 'Mail.Send' permission\n"
-                    "and that Exchange Online RBAC for Applications includes\n"
-                    "'Application Mail.Send' for the app's service principal."
-                ) from exc
+            if isinstance(exc, requests.exceptions.HTTPError):
+                status = exc.response.status_code
+                try:
+                    err_body = exc.response.json()
+                    err_msg = json.dumps(err_body, indent=2)
+                except Exception:
+                    err_msg = exc.response.text
+                print(
+                    f"DEBUG Graph error response (HTTP {status}):\n{err_msg}",
+                    file=sys.stderr,
+                )
+                if status == 401:
+                    raise PermissionError(
+                        f"Authentication failed (HTTP 401) when sending mail.\n"
+                        f"Check CLIENT_ID, CLIENT_SECRET, and TENANT_ID in .env.\n"
+                        f"Graph error: {err_msg}"
+                    ) from exc
+                if status == 403:
+                    raise PermissionError(
+                        f"Mail.Send denied (HTTP 403).\n"
+                        f"Ensure the app has the Mail.Send application permission\n"
+                        f"granted and admin-consented in Entra ID → App registrations.\n"
+                        f"Graph error: {err_msg}"
+                    ) from exc
+                if status == 400:
+                    raise RuntimeError(
+                        f"Exchange Online rejected the send-mail request (HTTP 400).\n"
+                        f"Check MAIL_SENDER_UPN ('{self.mail_sender_upn}') and verify\n"
+                        f"the mailbox exists and is a valid UserMailbox.\n"
+                        f"Graph error: {err_msg}"
+                    ) from exc
             raise
 
         return f"Email sent to {', '.join(r['emailAddress']['address'] for r in to_recipients)}"

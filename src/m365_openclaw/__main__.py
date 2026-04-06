@@ -413,19 +413,23 @@ def main():
                                 choices=['High', 'Normal', 'Low'])
             parser.add_argument('--attach', action='append', default=[],
                                 dest='attachments', metavar='FILE')
+            parser.add_argument('--debug', action='store_true',
+                                help='Return full Graph JSON response instead of a status message')
             pargs = parser.parse_args(args)
             to_list = [a.strip() for a in pargs.to.split(',') if a.strip()]
             cc_list = [a.strip() for a in pargs.cc.split(',') if a.strip()]
             bcc_list = [a.strip() for a in pargs.bcc.split(',') if a.strip()]
             content_type = 'HTML' if pargs.html else 'Text'
-            print(client.send_mail(
+            result = client.send_mail(
                 to_list,
                 pargs.subject, pargs.body,
                 cc=cc_list or None, bcc=bcc_list or None,
                 importance=pargs.priority,
                 attachments=pargs.attachments or None,
                 content_type=content_type,
-            ))
+                debug=pargs.debug,
+            )
+            print(json.dumps(result, indent=2) if isinstance(result, dict) else result)
 
         elif cmd == "mail-read":
             parser = argparse.ArgumentParser(prog='m365 mail-read')
@@ -993,28 +997,29 @@ def main():
             parser.add_argument('--bcc', default='')
             parser.add_argument('--importance', choices=['High', 'Normal', 'Low'],
                                 default='Normal')
-            parser.add_argument('--sensitivity',
-                                choices=['Normal', 'Personal', 'Private', 'Confidential'],
-                                default='Normal')
             parser.add_argument('--attach', action='append', default=[],
                                 dest='attachments')
             parser.add_argument('--delivery-receipt', action='store_true')
             parser.add_argument('--read-receipt', action='store_true')
+            parser.add_argument('--debug', action='store_true',
+                                help='Return full Graph JSON response instead of a status message')
             pargs = parser.parse_args(args)
             to_list = [a.strip() for a in pargs.to.split(',') if a.strip()]
             cc_list = [a.strip() for a in pargs.cc.split(',') if a.strip()]
             bcc_list = [a.strip() for a in pargs.bcc.split(',') if a.strip()]
             content_type = 'HTML' if pargs.html else 'Text'
-            print(client.send_mail(
+            result = client.send_mail(
                 to_list if len(to_list) > 1 else to_list[0],
                 pargs.subject, pargs.body,
                 cc=cc_list or None, bcc=bcc_list or None,
-                importance=pargs.importance, sensitivity=pargs.sensitivity,
+                importance=pargs.importance,
                 attachments=pargs.attachments or None,
                 request_delivery_receipt=pargs.delivery_receipt,
                 request_read_receipt=pargs.read_receipt,
                 content_type=content_type,
-            ))
+                debug=pargs.debug,
+            )
+            print(json.dumps(result, indent=2) if isinstance(result, dict) else result)
 
         elif cmd == "mail-search":
             if not args:

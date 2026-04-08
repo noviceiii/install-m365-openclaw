@@ -1412,6 +1412,14 @@ class M365Client:
         self._graph_patch(url, {'isChecked': True})
         return f"Step {step_id} marked as completed"
 
+    def todo_delete_checklist_item(self, list_id, task_id, item_id):
+        url = (
+            f"{GRAPH_ME}/todo/lists/{list_id}"
+            f"/tasks/{task_id}/checklistItems/{item_id}"
+        )
+        self._graph_delete(url)
+        return f"Checklist item {item_id} deleted"
+
     def todo_move_task(self, from_list_id, task_id, to_list_id):
         src_url = (
             f"{GRAPH_ME}/todo/lists/{from_list_id}"

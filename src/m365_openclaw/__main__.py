@@ -1281,11 +1281,18 @@ def main():
                 sys.exit(1)
             print(client.todo_complete_step(args[0], args[1], args[2]))
 
-        elif cmd == "todo-move-task":
-            if len(args) < 3:
-                print("Usage: m365 todo-move-task <from_list_id> <task_id> <to_list_id>")
+        elif cmd == "task-handle":
+            parser = argparse.ArgumentParser(prog='m365 task-handle')
+            parser.add_argument('task_id')
+            parser.add_argument('--list-id', default=None)
+            parser.add_argument('--to', required=True, metavar='TO_LIST_ID',
+                                help='Destination list ID to move the task to')
+            pargs = parser.parse_args(args)
+            list_id = pargs.list_id or client.todo_get_default_list_id()
+            if not list_id:
+                print("No task list found.", file=sys.stderr)
                 sys.exit(1)
-            print(client.todo_move_task(args[0], args[1], args[2]))
+            print(client.todo_move_task(list_id, pargs.task_id, pargs.to))
 
         # ── OneNote extended listing ──────────────────────────────────────────
 

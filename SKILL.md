@@ -281,7 +281,7 @@ The following legacy command names are still supported:
 | `todo-complete-task <list-id> <task-id>` | `task-edit <task-id> --complete --list-id ...` |
 | `todo-add-step <list-id> <task-id> <title>` | *(still supported directly)* |
 | `todo-complete-step <list-id> <task-id> <step-id>` | *(still supported directly)* |
-| `todo-move-task <src> <task-id> <dst>` | *(still supported directly)* |
+| `todo-move-task <src> <task-id> <dst>` | `task-handle <task-id> --list-id <src> --to <dst>` |
 | `task-update <id> [options]` | `task-edit <id> [options]` |
 
 ## Notes

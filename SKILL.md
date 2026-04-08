@@ -203,8 +203,10 @@ After sign-in the app runs headless; tokens refresh automatically.
 
 | Command | Description | Example |
 |---------|-------------|---------|
-| `onedrive-list [folder]` | List OneDrive folder | `m365 onedrive-list /Dokumente` |
-| `onedrive-upload \<local\> \<remote\>` | Upload to OneDrive | `m365 onedrive-upload ./report.pdf /Finance/report.pdf` |
+| `onedrive-list [folder]` | List OneDrive folder; output includes item **ID** and name. `[folder]` may be a path or a folder item ID | `m365 onedrive-list /Dokumente` |
+| `onedrive-list \<folder_id\>` | List a folder by its item ID (obtained from a previous `onedrive-list`) | `m365 onedrive-list ABC123xyz` |
+| `onedrive-upload \<local\> \<remote\>` | Upload to OneDrive by path | `m365 onedrive-upload ./report.pdf /Finance/report.pdf` |
+| `onedrive-upload \<local\> \<filename\> --folder-id \<id\>` | Upload into a folder by item ID; `<filename>` is the destination name within that folder | `m365 onedrive-upload ./report.pdf report.pdf --folder-id ABC123xyz` |
 | `onedrive-download \<remote\> \<local\>` | Download from OneDrive | `m365 onedrive-download /Finance/report.pdf ./local.pdf` |
 | `onedrive-delete \<remote\>` | Delete file or folder | `m365 onedrive-delete /alt/bericht.pdf` |
 | `onedrive-move \<old\> \<new\>` | Move or rename file/folder | `m365 onedrive-move /alt.pdf /neu/bericht.pdf` |
@@ -279,6 +281,8 @@ After sign-in the app runs headless; tokens refresh automatically.
 - `--count` flag is available on mail-list, contact-list, and task-list
 - `--id-only` flag on contact-list prints only IDs (one per line), useful for scripting
 - `--short` flag on contact-list prints ID, First Name, Last Name and Work Phone for compact view
+- `onedrive-list` output includes the item ID as the first column; pass an item ID (no leading `/`) as the `[folder]` argument to list that folder by ID
+- `onedrive-upload --folder-id <id>` uploads into a folder by its item ID, avoiding path-encoding issues
 - `onedrive-share --anyone` creates an anonymous link; omitting `--anyone` creates an org link
 - Excel update uses Graph API directly; file must not be open in Office
 - Word and PowerPoint use download → edit locally → re-upload workflow

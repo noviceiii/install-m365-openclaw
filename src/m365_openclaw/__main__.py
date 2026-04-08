@@ -509,7 +509,7 @@ def main():
                 print(f"Upcoming events (next {days} days):")
                 for e in events:
                     loc = f" @ {e['location']}" if e.get('location') else ""
-                    print(f"- {e['start']} | {e['subject']}{loc}")
+                    print(f"- {e['start']} | {e['subject']}{loc} | {e['id']}")
 
         elif cmd == "calendar-create":
             parser = argparse.ArgumentParser(prog='m365 calendar-create')

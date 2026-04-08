@@ -117,7 +117,7 @@ After sign-in the app runs headless; tokens refresh automatically.
 
 | Command | Description | Example |
 |---------|-------------|---------|
-| `calendar-list [N]` | List upcoming events (N = days, default 7) | `m365 calendar-list 14` |
+| `calendar-list [N]` | List upcoming events (N = days, default 7); output includes date/time, subject, location, and event ID | `m365 calendar-list 14` |
 | `calendar-create --subject TEXT --start ISO --end ISO` | Create event | `m365 calendar-create --subject Meeting --start 2026-04-10T10:00 --end 2026-04-10T11:00` |
 | `calendar-create ... --body TEXT` | Add description (HTML by default) | `m365 calendar-create --subject S --start T1 --end T2 --body "Q1 review"` |
 | `calendar-create ... --body TEXT --text` | Add description as plain text | `m365 calendar-create --subject S --start T1 --end T2 --body "Q1 review" --text` |

@@ -10,7 +10,7 @@ metadata: '{"openclaw":{"emoji":"📧","requires":{"bins":["m365"],"env":["TENAN
 
 OpenClaw skill for unattended Microsoft 365 access via Graph API.
 
-**Version:** 0.5.0 (Hybrid: Delegated Device-Code + Application Client-Credentials)
+**Version:** 0.6.0 (Hybrid: Delegated Device-Code + Application Client-Credentials)
 
 ## Executable
 m365

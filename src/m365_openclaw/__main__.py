@@ -207,9 +207,9 @@ OpenClaw M365 CLI v0.6.1 – Microsoft 365 for agents (delegated / device-code a
       --office-location TEXT
 
 ━━━ ONEDRIVE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  onedrive-list [folder]
-      List files/folders in a OneDrive folder (default: /).
-      [folder] may be a path (e.g. /Documents) or a folder item ID.
+  onedrive-list [<folder_id>]
+      List files/folders in a OneDrive folder (default: root).
+      <folder_id> must be a folder item ID obtained from a previous onedrive-list.
       Output includes the item ID and name of each entry.
 
   onedrive-upload <local_path> <remote_path> [--folder-id <id>]
@@ -930,8 +930,8 @@ def main():
         # ── OneDrive ─────────────────────────────────────────────────────────
 
         elif cmd == "onedrive-list":
-            folder = args[0] if args else "/"
-            items = client.onedrive_list(folder)
+            folder_id = args[0] if args else None
+            items = client.onedrive_list(folder_id)
             if not items:
                 print("Empty folder.")
             else:

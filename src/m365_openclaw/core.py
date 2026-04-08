@@ -1053,23 +1053,18 @@ class M365Client:
 
     # ── OneDrive ─────────────────────────────────────────────────────────────
 
-    def onedrive_list(self, folder_path="/"):
+    def onedrive_list(self, folder_id=None):
         """List items in a OneDrive folder.
 
-        *folder_path* can be a path (e.g. ``/Documents``) **or** the
-        Microsoft Graph item ID of a folder.  When a plain item ID is supplied
-        (i.e. the value does not start with ``/`` and is not empty), the folder
-        is addressed directly by ID, which avoids any path-encoding issues and
-        is the preferred way to refer to folders after an initial listing.
+        *folder_id* is the Microsoft Graph item ID of a folder obtained from a
+        previous ``onedrive-list`` call.  When omitted the root of the drive is
+        listed.
         """
-        if folder_path in ("/", ""):
+        if not folder_id:
             url = f"{GRAPH_ME}/drive/root/children"
-        elif not folder_path.startswith("/"):
-            # Treat as a folder item ID
-            url = f"{GRAPH_ME}/drive/items/{folder_path}/children"
         else:
-            encoded = folder_path.rstrip("/")
-            url = f"{GRAPH_ME}/drive/root:{encoded}:/children"
+            # Treat as a folder item ID
+            url = f"{GRAPH_ME}/drive/items/{folder_id}/children"
         data = self._graph_get(url, params={'$top': 200})
         result = []
         for item in data.get('value', []):

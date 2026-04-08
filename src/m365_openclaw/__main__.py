@@ -90,15 +90,15 @@ OpenClaw M365 CLI v0.5.0 – Microsoft 365 for agents (delegated / device-code a
   calendar-read <event_id>
       Show details of a calendar event.
       --participants   List participants and their status
-      --cancel         Cancel the event (organizer only)
-      --cancel-no-info Cancel without sending cancellation notice
-      --delete         Permanently delete the event
 
   calendar-handle <event_id>
-      Respond to a meeting invitation.
+      Respond to or manage a calendar event.
       --confirm-accept    Accept the invitation
       --confirm-tentative Tentatively accept
       --confirm-deny      Decline the invitation
+      --cancel            Cancel the event (organizer only)
+      --cancel-no-info    Cancel without sending cancellation notice
+      --delete            Permanently delete the event
 
 ━━━ CONTACTS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   contact-list [N]
@@ -554,24 +554,16 @@ def main():
             parser = argparse.ArgumentParser(prog='m365 calendar-read')
             parser.add_argument('event_id')
             parser.add_argument('--participants', action='store_true')
-            parser.add_argument('--cancel', action='store_true')
-            parser.add_argument('--cancel-no-info', action='store_true')
-            parser.add_argument('--delete', action='store_true')
             pargs = parser.parse_args(args)
-            if pargs.cancel or pargs.cancel_no_info:
-                print(client.cancel_calendar_event(pargs.event_id))
-            elif pargs.delete:
-                print(client.delete_calendar_event(pargs.event_id))
+            event = client.get_calendar_event(pargs.event_id)
+            if pargs.participants:
+                print(f"Event: {event.get('subject')}")
+                print("Attendees:")
+                for a in event.get('attendees', []):
+                    print(f"  [{a.get('status', '?'):12}] "
+                          f"{a.get('name')} <{a.get('email')}> ({a.get('type')})")
             else:
-                event = client.get_calendar_event(pargs.event_id)
-                if pargs.participants:
-                    print(f"Event: {event.get('subject')}")
-                    print("Attendees:")
-                    for a in event.get('attendees', []):
-                        print(f"  [{a.get('status', '?'):12}] "
-                              f"{a.get('name')} <{a.get('email')}> ({a.get('type')})")
-                else:
-                    _print_json(event)
+                _print_json(event)
 
         elif cmd == "calendar-handle":
             parser = argparse.ArgumentParser(prog='m365 calendar-handle')
@@ -580,13 +572,20 @@ def main():
             group.add_argument('--confirm-accept', action='store_true')
             group.add_argument('--confirm-tentative', action='store_true')
             group.add_argument('--confirm-deny', action='store_true')
+            group.add_argument('--cancel', action='store_true')
+            group.add_argument('--cancel-no-info', action='store_true')
+            group.add_argument('--delete', action='store_true')
             pargs = parser.parse_args(args)
             if pargs.confirm_accept:
                 print(client.respond_calendar_event(pargs.event_id, 'accept'))
             elif pargs.confirm_tentative:
                 print(client.respond_calendar_event(pargs.event_id, 'tentativelyAccept'))
-            else:
+            elif pargs.confirm_deny:
                 print(client.respond_calendar_event(pargs.event_id, 'decline'))
+            elif pargs.cancel or pargs.cancel_no_info:
+                print(client.cancel_calendar_event(pargs.event_id))
+            elif pargs.delete:
+                print(client.delete_calendar_event(pargs.event_id))
 
         # ── Contacts ─────────────────────────────────────────────────────────
 

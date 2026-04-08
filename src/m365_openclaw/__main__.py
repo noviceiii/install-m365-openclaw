@@ -139,6 +139,9 @@ OpenClaw M365 CLI v0.5.0 – Microsoft 365 for agents (delegated / device-code a
       --delete        Delete photo
       --download PATH Save photo to local file
 
+  contact-delete <contact_id>
+      Delete a contact from the address book by ID.
+
   contactlist-list
       Show all contact folders / contact lists.
 

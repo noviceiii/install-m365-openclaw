@@ -2,7 +2,7 @@
 
 OpenClaw Skill for Microsoft 365 access via Graph API with delegated permissions (Device-Code Flow).
 
-**Version:** 0.5.1 (Delegated Permissions – Device-Code Flow)  
+**Version:** 0.6.0 (Delegated Permissions – Device-Code Flow - reworked and enhanced command structure)  
 **Goal:** Headless M365 access for OpenClaw agents – one-time sign-in via Device-Code, then permanently token-based.
 
 ## Quick Start

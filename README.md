@@ -1,40 +1,57 @@
 # install-m365-openclaw
 
-OpenClaw Skill für Microsoft 365 Zugriff via Graph API mit delegierten Berechtigungen (Device-Code Flow).
+OpenClaw Skill for Microsoft 365 access via Graph API with delegated permissions (Device-Code Flow).
 
 **Version:** 0.5.1 (Delegated Permissions – Device-Code Flow)  
-**Ziel:** Headless M365-Zugriff für OpenClaw-Agenten – einmalige Anmeldung per Device-Code, danach dauerhaft tokenbasiert.
+**Goal:** Headless M365 access for OpenClaw agents – one-time sign-in via Device-Code, then permanently token-based.
 
-## Schnellstart
+## Quick Start
 
 ```bash
 curl -L https://raw.githubusercontent.com/noviceiii/install-m365-openclaw/main/install-m365-openclaw.sh | bash
 ```
 
-## Voraussetzungen & Setup
+## Features
+
+This skill gives OpenClaw agents full access to your Microsoft 365 account. Key capabilities include:
+
+- **Mail** – Send and read e-mails, reply, forward, manage folders
+- **Contacts** – Create, edit, and delete contacts and contact folders
+- **Tasks** – Manage Microsoft To Do tasks and task lists
+- **Calendar** – Create, read, and manage calendar events; handle invitations (accept, tentative, decline)
+- **OneDrive** – Upload, download, move, and share files
+- **Teams Chat & Online Meetings** – Create chats, send messages, schedule online meetings
+- **OneNote** – Create and list notebook pages
+- **Office Documents** – Update Excel, Word, and PowerPoint files via Graph API
+- **Bookings** – Manage Microsoft Bookings appointments
+- **SharePoint** – List and search SharePoint sites
+
+For a full list of all commands and options, see [SKILL.md](SKILL.md).
+
+## Prerequisites & Setup
 
 1. Entra ID App Registration (Delegated Permissions) → [Microsoft-ENTRA-ID-installation.md](Microsoft-ENTRA-ID-installation.md)
-2. Credentials in `~/.openclaw/skills/m365-graph/.env` eintragen (TENANT_ID, CLIENT_ID)
-3. Erste Anmeldung per Device-Code: `m365 auth-login`
-4. Danach headless: `m365 calendar-list`
+2. Enter credentials in `~/.openclaw/skills/m365-graph/.env` (TENANT_ID, CLIENT_ID)
+3. First sign-in via Device-Code: `m365 auth-login`
+4. After that, run headlessly: `m365 calendar-list`
 
-Siehe [SKILL.md](SKILL.md) für alle verfügbaren Befehle.
+See [SKILL.md](SKILL.md) for all available commands.
 
-## Authentifizierung
+## Authentication
 
-Die Skill verwendet **delegierte Berechtigungen** mit **Device-Code Flow**:
+The skill uses **delegated permissions** with **Device-Code Flow**:
 
-- Der Benutzer meldet sich **einmalig** interaktiv an auf **https://microsoft.com/devicelogin**
-- Der Code wird im Terminal angezeigt
-- Nach der Anmeldung speichert die App Refresh-Tokens und arbeitet **dauerhaft headless**
-- Kein Browser auf dem Server nötig
-- Kein Client-Secret nötig
+- The user signs in **once** interactively at **https://microsoft.com/devicelogin**
+- The code is displayed in the terminal
+- After sign-in the app stores Refresh Tokens and works **permanently headless**
+- No browser required on the server
+- No client secret required
 
 ## OpenClaw Integration
 
-### Skill-Registrierung
+### Skill Registration
 
-Der Installer registriert den Skill automatisch in `~/.openclaw/openclaw.json`:
+The installer automatically registers the skill in `~/.openclaw/openclaw.json`:
 
 ```json
 {
@@ -48,15 +65,14 @@ Der Installer registriert den Skill automatisch in `~/.openclaw/openclaw.json`:
 }
 ```
 
-Bestehende Konfigurationswerte werden dabei **erhalten** – nur fehlende Einträge werden ergänzt.
+Existing configuration values are **preserved** – only missing entries are added.
 
-### Multi-Agent Betrieb
+### Multi-Agent Operation
 
-Nach der Installation ist der Skill als **geteilte Ressource** für alle OpenClaw-Agenten
-auf dieser Maschine verfügbar (via `~/.openclaw/skills/m365-graph`).
+After installation the skill is available as a **shared resource** for all OpenClaw agents
+on this machine (via `~/.openclaw/skills/m365-graph`).
 
-Um den Skill auf bestimmte Agenten zu beschränken, kann in `~/.openclaw/openclaw.json`
-eine Allowlist konfiguriert werden:
+To restrict the skill to specific agents, an allowlist can be configured in `~/.openclaw/openclaw.json`:
 
 ```json
 {
@@ -72,19 +88,32 @@ eine Allowlist konfiguriert werden:
 }
 ```
 
-### Skill-Manager
+### Skill Manager
 
-Das `SKILL.md` enthält YAML-Frontmatter gemäss der [AgentSkills](https://agentskills.io)-Spezifikation
-und ist damit kompatibel mit dem OpenClaw Skill-Manager:
+`SKILL.md` contains YAML frontmatter according to the [AgentSkills](https://agentskills.io) specification
+and is therefore compatible with the OpenClaw Skill Manager:
 
 ```bash
-# Skill-Status prüfen (nach openclaw.json Konfiguration)
+# Check skill status (based on openclaw.json configuration)
 openclaw skills list
 ```
 
-### Erneute Installation / Update
+### Re-installation / Update
 
-Das Installer-Script kann mehrfach ausgeführt werden:
-- **Bestehende `.env` Werte** (Credentials) werden **nicht überschrieben** – nur fehlende Keys werden ergänzt
-- **Bestehende `openclaw.json` Einträge** bleiben erhalten
-- Python-Pakete und der CLI-Wrapper werden aktualisiert
+The installer script can be run multiple times:
+- **Existing `.env` values** (credentials) are **not overwritten** – only missing keys are added
+- **Existing `openclaw.json` entries** are preserved
+- Python packages and the CLI wrapper are updated
+
+## License
+
+Copyright © noviceiii
+
+**Private use permitted** – You are free to use and modify this software for personal,
+non-commercial purposes.
+
+**Commercial use prohibited** – The use of this software, in whole or in part, for any
+commercial purpose (including internal business operations of a for-profit organization)
+is **not permitted** without prior written permission from the author.
+
+This software is provided "as is", without warranty of any kind.

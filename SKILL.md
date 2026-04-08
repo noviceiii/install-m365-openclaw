@@ -130,11 +130,11 @@ After sign-in the app runs headless; tokens refresh automatically.
 | `calendar-create ... --attach FILE` | Attach file | `m365 calendar-create --subject S --start T1 --end T2 --attach agenda.pdf` |
 | `calendar-read \<id\>` | Show event details | `m365 calendar-read AAES...` |
 | `calendar-read \<id\> --participants` | List attendees and status | `m365 calendar-read AAES... --participants` |
-| `calendar-read \<id\> --cancel` | Cancel event | `m365 calendar-read AAES... --cancel` |
-| `calendar-read \<id\> --delete` | Delete event | `m365 calendar-read AAES... --delete` |
 | `calendar-handle \<id\> --confirm-accept` | Accept invitation | `m365 calendar-handle AAES... --confirm-accept` |
 | `calendar-handle \<id\> --confirm-tentative` | Tentatively accept | `m365 calendar-handle AAES... --confirm-tentative` |
 | `calendar-handle \<id\> --confirm-deny` | Decline invitation | `m365 calendar-handle AAES... --confirm-deny` |
+| `calendar-handle \<id\> --cancel` | Cancel event | `m365 calendar-handle AAES... --cancel` |
+| `calendar-handle \<id\> --delete` | Delete event | `m365 calendar-handle AAES... --delete` |
 
 ### Contacts
 

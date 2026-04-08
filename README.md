@@ -2,7 +2,7 @@
 
 OpenClaw Skill für Microsoft 365 Zugriff via Graph API mit delegierten Berechtigungen (Device-Code Flow).
 
-**Version:** 0.5.0 (Delegated Permissions – Device-Code Flow)  
+**Version:** 0.5.1 (Delegated Permissions – Device-Code Flow)  
 **Ziel:** Headless M365-Zugriff für OpenClaw-Agenten – einmalige Anmeldung per Device-Code, danach dauerhaft tokenbasiert.
 
 ## Schnellstart
@@ -29,3 +29,62 @@ Die Skill verwendet **delegierte Berechtigungen** mit **Device-Code Flow**:
 - Nach der Anmeldung speichert die App Refresh-Tokens und arbeitet **dauerhaft headless**
 - Kein Browser auf dem Server nötig
 - Kein Client-Secret nötig
+
+## OpenClaw Integration
+
+### Skill-Registrierung
+
+Der Installer registriert den Skill automatisch in `~/.openclaw/openclaw.json`:
+
+```json
+{
+  "skills": {
+    "entries": {
+      "m365-graph": {
+        "enabled": true
+      }
+    }
+  }
+}
+```
+
+Bestehende Konfigurationswerte werden dabei **erhalten** – nur fehlende Einträge werden ergänzt.
+
+### Multi-Agent Betrieb
+
+Nach der Installation ist der Skill als **geteilte Ressource** für alle OpenClaw-Agenten
+auf dieser Maschine verfügbar (via `~/.openclaw/skills/m365-graph`).
+
+Um den Skill auf bestimmte Agenten zu beschränken, kann in `~/.openclaw/openclaw.json`
+eine Allowlist konfiguriert werden:
+
+```json
+{
+  "agents": {
+    "defaults": {
+      "skills": ["m365-graph"]
+    },
+    "list": [
+      { "id": "cleotine" },
+      { "id": "restricted-agent", "skills": [] }
+    ]
+  }
+}
+```
+
+### Skill-Manager
+
+Das `SKILL.md` enthält YAML-Frontmatter gemäss der [AgentSkills](https://agentskills.io)-Spezifikation
+und ist damit kompatibel mit dem OpenClaw Skill-Manager:
+
+```bash
+# Skill-Status prüfen (nach openclaw.json Konfiguration)
+openclaw skills list
+```
+
+### Erneute Installation / Update
+
+Das Installer-Script kann mehrfach ausgeführt werden:
+- **Bestehende `.env` Werte** (Credentials) werden **nicht überschrieben** – nur fehlende Keys werden ergänzt
+- **Bestehende `openclaw.json` Einträge** bleiben erhalten
+- Python-Pakete und der CLI-Wrapper werden aktualisiert

@@ -66,6 +66,7 @@ OpenClaw M365 CLI v0.5.0 – Microsoft 365 for agents (delegated / device-code a
 
   mailbox-handle
       Manage mail folders.
+      --folder-list           List all mail folders (returns ID and Name)
       --folder-create NAME    Create a new folder
       --folder-delete NAME    Delete a folder (by name or ID)
       --folder-rename ID NAME Rename a folder
@@ -492,11 +493,19 @@ def main():
         elif cmd == "mailbox-handle":
             parser = argparse.ArgumentParser(prog='m365 mailbox-handle')
             group = parser.add_mutually_exclusive_group(required=True)
+            group.add_argument('--folder-list', action='store_true', default=False)
             group.add_argument('--folder-create', metavar='NAME')
             group.add_argument('--folder-delete', metavar='NAME_OR_ID')
             group.add_argument('--folder-rename', nargs=2, metavar=('ID', 'NAME'))
             pargs = parser.parse_args(args)
-            if pargs.folder_create:
+            if pargs.folder_list:
+                folders = client.list_mail_folders()
+                if not folders:
+                    print("No mail folders found.")
+                else:
+                    for f in folders:
+                        print(f"{f['id']}\t{f['name']}")
+            elif pargs.folder_create:
                 print(client.create_mail_folder(pargs.folder_create))
             elif pargs.folder_delete:
                 print(client.delete_mail_folder(pargs.folder_delete))

@@ -117,6 +117,7 @@ After sign-in the app runs headless; tokens refresh automatically.
 | `mail-handle \<id\> --delete` | Delete a message | `m365 mail-handle AAMk... --delete` |
 | `mail-handle \<id\> --archive` | Archive a message | `m365 mail-handle AAMk... --archive` |
 | `mail-handle \<id\> --move FOLDER` | Move to folder | `m365 mail-handle AAMk... --move ProjektX` |
+| `mailbox-handle --folder-list` | List all mail folders (returns ID and Name) | `m365 mailbox-handle --folder-list` |
 | `mailbox-handle --folder-create NAME` | Create mail folder | `m365 mailbox-handle --folder-create ProjektX` |
 | `mailbox-handle --folder-delete NAME` | Delete mail folder | `m365 mailbox-handle --folder-delete ProjektX` |
 | `mailbox-handle --folder-rename ID NAME` | Rename mail folder | `m365 mailbox-handle --folder-rename AAMk... NewName` |

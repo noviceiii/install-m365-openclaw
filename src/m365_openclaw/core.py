@@ -512,6 +512,18 @@ class M365Client:
 
         return result
 
+    def list_mail_folders(self):
+        url = f"{self._base_url()}/mailFolders"
+        try:
+            data = self._graph_get(url)
+        except Exception as exc:
+            self._raise_if_mail_403(exc)
+            raise
+        return [
+            {'id': f.get('id', ''), 'name': f.get('displayName', '')}
+            for f in data.get('value', [])
+        ]
+
     def create_mail_folder(self, folder_name):
         url = f"{self._base_url()}/mailFolders"
         try:

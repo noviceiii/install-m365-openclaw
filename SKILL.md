@@ -1,3 +1,11 @@
+---
+name: m365-graph
+description: OpenClaw skill for unattended Microsoft 365 access via Graph API. Supports Mail, Calendar, Contacts, OneDrive, Tasks, Teams Chat, Online Meetings, Bookings, and SharePoint.
+# metadata must be a single-line JSON string – the OpenClaw embedded agent parser
+# only supports single-line frontmatter values (see AgentSkills/OpenClaw spec).
+metadata: '{"openclaw":{"emoji":"📧","requires":{"bins":["m365"],"env":["TENANT_ID","CLIENT_ID"]},"install":[{"id":"bash","kind":"download","label":"Install via install-m365-openclaw.sh","url":"https://raw.githubusercontent.com/noviceiii/install-m365-openclaw/main/install-m365-openclaw.sh"}]}}'
+---
+
 # SKILL: m365-graph
 
 OpenClaw skill for unattended Microsoft 365 access via Graph API.

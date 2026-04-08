@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # =============================================================================
-# OpenClaw M365 Graph Skill Installer v0.5.1
+# OpenClaw M365 Graph Skill Installer v0.6.1
 # =============================================================================
 set -euo pipefail
 
 DEFAULT_OPENCLAW_DIR="${HOME}/.openclaw"
 
-echo "=== OpenClaw M365 Graph Skill Installer v0.6.0 ==="
+echo "=== OpenClaw M365 Graph Skill Installer v0.6.1 ==="
 
 read -p "OpenClaw base directory [${DEFAULT_OPENCLAW_DIR}]: " OPENCLAW_DIR
 OPENCLAW_DIR="${OPENCLAW_DIR:-${DEFAULT_OPENCLAW_DIR}}"

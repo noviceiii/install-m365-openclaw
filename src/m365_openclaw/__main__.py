@@ -1,5 +1,5 @@
 """
-__main__.py – CLI entry point for the OpenClaw M365 skill (v0.5.0).
+__main__.py – CLI entry point for the OpenClaw M365 skill (v0.6.1).
 
 Invoked as:  python -m m365_openclaw <command> [arguments...]
 Or via the  m365  wrapper script placed in ~/.local/bin.
@@ -10,7 +10,7 @@ import json
 import sys
 
 USAGE = """\
-OpenClaw M365 CLI v0.5.0 – Microsoft 365 for agents (delegated / device-code auth)
+OpenClaw M365 CLI v0.6.1 – Microsoft 365 for agents (delegated / device-code auth)
 
 ━━━ AUTH ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   auth-login

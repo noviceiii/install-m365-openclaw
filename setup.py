@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='m365_openclaw',
-    version='0.5.0',
+    version='0.6.1',
     description='Microsoft m365 Skill for OpenClaw agents (delegated / device-code auth)',
     packages=find_packages(where='src'),
     package_dir={'': 'src'},

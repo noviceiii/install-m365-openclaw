@@ -1,5 +1,5 @@
 """
-core.py – Microsoft 365 client for OpenClaw agents (v0.5.0).
+core.py – Microsoft 365 client for OpenClaw agents (v0.6.1).
 
 Supports: Mail, Calendar, Contacts, OneDrive, OneNote, Excel, Word, PowerPoint,
           Microsoft ToDo tasks, Teams Chats, Online Meetings, Bookings, Sites.

@@ -170,13 +170,16 @@ OpenClaw M365 CLI v0.5.0 – Microsoft 365 for agents (delegated / device-code a
       Show details of a task.
       --list-id ID   Task list ID (required if task ID is ambiguous)
 
-  task-update <task_id>
-      Update a task.
-      --list-id ID   Task list ID
+  task-edit <task_id>
+      Edit a task (replaces task-update).
+      --list-id ID               Task list ID
       --title TEXT
       --status notStarted|inProgress|completed
       --due YYYY-MM-DDTHH:MM:SS
-      --complete     Mark as completed
+      --complete                 Mark as completed
+      --checklist-add TEXT       Add a checklist item
+      --checklist-complete ID    Mark a checklist item as completed
+      --checklist-delete ID      Delete a checklist item
 
   task-delete <task_id>
       Delete a task.
@@ -822,8 +825,8 @@ def main():
             else:
                 print(f"Task '{pargs.task_id}' not found.")
 
-        elif cmd == "task-update":
-            parser = argparse.ArgumentParser(prog='m365 task-update')
+        elif cmd in ("task-edit", "task-update"):
+            parser = argparse.ArgumentParser(prog=f'm365 {cmd}')
             parser.add_argument('task_id')
             parser.add_argument('--list-id', default=None)
             parser.add_argument('--title', default=None)
@@ -831,12 +834,25 @@ def main():
                                 choices=['notStarted', 'inProgress', 'completed'])
             parser.add_argument('--due', default=None, metavar='YYYY-MM-DDTHH:MM:SS')
             parser.add_argument('--complete', action='store_true')
+            checklist_group = parser.add_mutually_exclusive_group()
+            checklist_group.add_argument('--checklist-add', default=None, metavar='TEXT',
+                                         help='Add a checklist item with the given title')
+            checklist_group.add_argument('--checklist-complete', default=None, metavar='ID',
+                                         help='Mark a checklist item as completed')
+            checklist_group.add_argument('--checklist-delete', default=None, metavar='ID',
+                                         help='Delete a checklist item')
             pargs = parser.parse_args(args)
             list_id = pargs.list_id or client.todo_get_default_list_id()
             if not list_id:
                 print("No task list found.", file=sys.stderr)
                 sys.exit(1)
-            if pargs.complete:
+            if pargs.checklist_add:
+                print(client.todo_add_step(list_id, pargs.task_id, pargs.checklist_add))
+            elif pargs.checklist_complete:
+                print(client.todo_complete_step(list_id, pargs.task_id, pargs.checklist_complete))
+            elif pargs.checklist_delete:
+                print(client.todo_delete_checklist_item(list_id, pargs.task_id, pargs.checklist_delete))
+            elif pargs.complete:
                 print(client.todo_complete_task(list_id, pargs.task_id))
             else:
                 print(client.todo_update_task(

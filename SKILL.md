@@ -170,7 +170,7 @@ After sign-in the app runs headless; tokens refresh automatically.
 | `task-create ... --body TEXT` | Add notes | `m365 task-create --title T --body "Details here"` |
 | `task-read \<id\>` | Show task details | `m365 task-read ABC123` |
 | `task-read \<id\> --list-id ID` | Read from specific list | `m365 task-read ABC123 --list-id AAMk...` |
-| `task-edit \<id\> [options]` | Edit a task (replaces task-update) | `m365 task-edit ABC123 --status completed` |
+| `task-edit \<id\> [options]` | Edit a task | `m365 task-edit ABC123 --status completed` |
 | `task-edit \<id\> --complete` | Mark task as completed | `m365 task-edit ABC123 --complete` |
 | `task-edit \<id\> --checklist-add TEXT` | Add a checklist item to the task | `m365 task-edit ABC123 --checklist-add "Review PR"` |
 | `task-edit \<id\> --checklist-complete ITEM_ID` | Mark a checklist item as completed | `m365 task-edit ABC123 --checklist-complete ITEM_ID` |
@@ -178,6 +178,10 @@ After sign-in the app runs headless; tokens refresh automatically.
 | `task-delete \<id\>` | Delete a task | `m365 task-delete ABC123` |
 | `tasklist-list` | List all task lists | `m365 tasklist-list` |
 | `tasklist-create \<name\>` | Create a task list | `m365 tasklist-create Privat` |
+| `todo-rename-list \<list_id\> \<new_name\>` | Rename a task list | `m365 todo-rename-list AAMk... NewName` |
+| `todo-delete-list \<list_id\>` | Delete a task list | `m365 todo-delete-list AAMk...` |
+| `todo-add-step \<list_id\> \<task_id\> \<title\>` | Add a checklist step to a task | `m365 todo-add-step AAMk... ABC123 "Review PR"` |
+| `todo-complete-step \<list_id\> \<task_id\> \<step_id\>` | Mark a checklist step as completed | `m365 todo-complete-step AAMk... ABC123 STEP_ID` |
 
 ### User
 
@@ -251,38 +255,6 @@ After sign-in the app runs headless; tokens refresh automatically.
 |---------|-------------|---------|
 | `sites-list [N]` | List accessible sites (default 20) | `m365 sites-list` |
 | `sites-search \<query\>` | Search sites by keyword | `m365 sites-search "Intranet"` |
-
-## Backward-Compatible Aliases
-
-The following legacy command names are still supported:
-
-| Legacy Command | New Equivalent |
-|----------------|---------------|
-| `send-mail <to> <subject> <body>` | `mail-send --to ... --subject ... --body ...` |
-| `mail-headers <id>` | `mail-read <id> --read-header` |
-| `mail-reply-all <id> <body>` | `mail-reply <id> --body ... --reply-all` |
-| `mail-delete <id>` | `mail-handle <id> --delete` |
-| `mail-move <id> <folder>` | `mail-handle <id> --move <folder>` |
-| `contacts-list [N]` | `contact-list [N]` |
-| `contacts-get <name>` | `contact-read <id>` |
-| `contacts-create <first> <last>` | `contact-create <first> <last>` |
-| `contacts-photo-set <id> <file>` | `contact-photo <id> --upload <file>` |
-| `contacts-photo-delete <id>` | `contact-photo <id> --delete` |
-| `contacts-photo-get <id> <path>` | `contact-photo <id> --download <path>` |
-| `upload <local> <remote>` | `onedrive-upload <local> <remote>` |
-| `download <remote> <local>` | `onedrive-download <remote> <local>` |
-| `todo-list-lists` | `tasklist-list` |
-| `todo-create-list <name>` | `tasklist-create <name>` |
-| `todo-list-tasks <id>` | `task-list --list-id <id>` |
-| `todo-all-tasks` | `task-list` |
-| `todo-task-today` | `task-list --status notStarted` |
-| `todo-create-task <list-id> <title>` | `task-create --title ... --list-id ...` |
-| `todo-update-task <list-id> <task-id>` | `task-edit <task-id> --list-id ...` |
-| `todo-complete-task <list-id> <task-id>` | `task-edit <task-id> --complete --list-id ...` |
-| `todo-add-step <list-id> <task-id> <title>` | *(still supported directly)* |
-| `todo-complete-step <list-id> <task-id> <step-id>` | *(still supported directly)* |
-| `todo-move-task <src> <task-id> <dst>` | `task-handle <task-id> --list-id <src> --to <dst>` |
-| `task-update <id> [options]` | `task-edit <id> [options]` |
 
 ## Notes
 - Authentication is a hybrid model: delegated (device-code) for most features;

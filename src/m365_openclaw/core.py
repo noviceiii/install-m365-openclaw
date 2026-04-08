@@ -1054,8 +1054,19 @@ class M365Client:
     # ── OneDrive ─────────────────────────────────────────────────────────────
 
     def onedrive_list(self, folder_path="/"):
+        """List items in a OneDrive folder.
+
+        *folder_path* can be a path (e.g. ``/Documents``) **or** the
+        Microsoft Graph item ID of a folder.  When a plain item ID is supplied
+        (i.e. the value does not start with ``/`` and is not empty), the folder
+        is addressed directly by ID, which avoids any path-encoding issues and
+        is the preferred way to refer to folders after an initial listing.
+        """
         if folder_path in ("/", ""):
             url = f"{GRAPH_ME}/drive/root/children"
+        elif not folder_path.startswith("/"):
+            # Treat as a folder item ID
+            url = f"{GRAPH_ME}/drive/items/{folder_path}/children"
         else:
             encoded = folder_path.rstrip("/")
             url = f"{GRAPH_ME}/drive/root:{encoded}:/children"
@@ -1063,6 +1074,7 @@ class M365Client:
         result = []
         for item in data.get('value', []):
             result.append({
+                'id': item.get('id', ''),
                 'name': item.get('name', ''),
                 'type': 'folder' if 'folder' in item else 'file',
                 'size': item.get('size'),
@@ -1070,10 +1082,23 @@ class M365Client:
             })
         return result
 
-    def onedrive_upload(self, local_path, remote_path):
+    def onedrive_upload(self, local_path, remote_path, folder_id=None):
+        """Upload a local file to OneDrive.
+
+        *remote_path* is the full destination path (e.g. ``/Documents/report.pdf``).
+        *folder_id* is an optional Microsoft Graph item ID of the destination
+        folder.  When *folder_id* is provided, *remote_path* is used only as
+        the **file name** (basename) within that folder; this avoids
+        path-encoding issues and is the preferred way to upload into a
+        specific folder after obtaining its ID via ``onedrive-list``.
+        """
         with open(local_path, 'rb') as fh:
             content = fh.read()
-        url = f"{GRAPH_ME}/drive/root:{remote_path}:/content"
+        if folder_id:
+            file_name = Path(remote_path).name
+            url = f"{GRAPH_ME}/drive/items/{folder_id}:/{file_name}:/content"
+        else:
+            url = f"{GRAPH_ME}/drive/root:{remote_path}:/content"
         resp = requests.put(
             url,
             headers=self._graph_headers(content_type='application/octet-stream'),

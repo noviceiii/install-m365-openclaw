@@ -208,10 +208,14 @@ OpenClaw M365 CLI v0.5.0 – Microsoft 365 for agents (delegated / device-code a
 
 ━━━ ONEDRIVE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   onedrive-list [folder]
-      List files in a OneDrive folder (default: /)
+      List files/folders in a OneDrive folder (default: /).
+      [folder] may be a path (e.g. /Documents) or a folder item ID.
+      Output includes the item ID and name of each entry.
 
-  onedrive-upload <local_path> <remote_path>
+  onedrive-upload <local_path> <remote_path> [--folder-id <id>]
       Upload a local file to OneDrive.
+      --folder-id <id>   Upload into the folder with the given item ID.
+                         <remote_path> is then used as the destination filename.
 
   onedrive-download <remote_path> <local_path>
       Download a file from OneDrive.
@@ -933,13 +937,17 @@ def main():
             else:
                 for item in items:
                     size = f" ({item['size']} B)" if item.get('size') else ""
-                    print(f"[{item['type'].upper()}] {item['name']}{size}")
+                    print(f"[{item['type'].upper()}] {item['id']}  {item['name']}{size}")
 
         elif cmd == "onedrive-upload":
-            if len(args) < 2:
-                print("Usage: m365 onedrive-upload <local_path> <remote_path>")
-                sys.exit(1)
-            print(client.onedrive_upload(args[0], args[1]))
+            parser = argparse.ArgumentParser(prog='m365 onedrive-upload')
+            parser.add_argument('local_path')
+            parser.add_argument('remote_path')
+            parser.add_argument('--folder-id', dest='folder_id', default=None,
+                                help='Item ID of the destination folder')
+            pargs = parser.parse_args(args)
+            print(client.onedrive_upload(pargs.local_path, pargs.remote_path,
+                                         folder_id=pargs.folder_id))
 
         elif cmd == "onedrive-download":
             if len(args) < 2:

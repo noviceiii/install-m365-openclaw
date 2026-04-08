@@ -34,8 +34,9 @@ For a full list of all commands and options, see [SKILL.md](SKILL.md).
 
 1. Entra ID App Registration (Delegated Permissions) → [Microsoft-ENTRA-ID-installation.md](Microsoft-ENTRA-ID-installation.md)
 2. Enter credentials in `~/.openclaw/skills/m365-graph/.env` (TENANT_ID, CLIENT_ID)
-3. First sign-in via Device-Code: `m365 auth-login`
-4. After that, run headlessly: `m365 calendar-list`
+3. Set the Exchange Policies  → [setup-exchange-policy.ps1](setup-exchange-policy.ps1)
+4. First sign-in via Device-Code: `m365 auth-login`
+5. After that, run headlessly: `m365 calendar-list`
 
 See [SKILL.md](SKILL.md) for all available commands.
 

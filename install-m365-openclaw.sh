@@ -20,14 +20,33 @@ CLI_NAME="m365"
 sudo apt update -qq && sudo apt install -y python3 python3-venv python3-pip git
 
 mkdir -p "${INSTALL_DIR}"/{src/m365_openclaw,bin} "${OPENCLAW_DIR}/credentials" "${HOME}/.local/bin"
+chmod 700 "${OPENCLAW_DIR}/credentials"
 
 # venv + dependencies
 python3 -m venv "${VENV_DIR}"
 "${VENV_DIR}/bin/pip" install --upgrade pip
-"${VENV_DIR}/bin/pip" install msal python-dotenv python-docx python-pptx openpyxl requests
+"${VENV_DIR}/bin/pip" install \
+    'msal>=1.32,<2' \
+    'python-dotenv>=1.0.1,<2' \
+    'python-docx>=1.1,<2' \
+    'python-pptx>=1.0,<2' \
+    'requests>=2.32,<3'
 
-# Copy package files from repository structure
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Copy package files from repository structure.
+# curl|bash leaves this script without sibling setup.py/src; clone the repo
+# into a well-known temp directory in that case. If the files are already
+# next to the script (git clone / local copy), keep the current copy behavior.
+SCRIPT_DIR=""
+if [ -n "${BASH_SOURCE[0]:-}" ] && [ -e "${BASH_SOURCE[0]}" ]; then
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)"
+fi
+if [ -z "${SCRIPT_DIR}" ] || [ ! -f "${SCRIPT_DIR}/setup.py" ] || [ ! -d "${SCRIPT_DIR}/src/m365_openclaw" ]; then
+    CLONE_DIR="${TMPDIR:-/tmp}/install-m365-openclaw-src"
+    echo "Package files not found next to the installer; cloning repository to ${CLONE_DIR}..."
+    rm -rf "${CLONE_DIR}"
+    git clone --depth 1 "https://github.com/noviceiii/install-m365-openclaw.git" "${CLONE_DIR}"
+    SCRIPT_DIR="${CLONE_DIR}"
+fi
 cp "${SCRIPT_DIR}/setup.py" "${INSTALL_DIR}/"
 cp -r "${SCRIPT_DIR}/src/m365_openclaw/." "${INSTALL_DIR}/src/m365_openclaw/"
 
@@ -78,6 +97,7 @@ else
     _set_env_if_missing "MAIL_SENDER_UPN"  "sender@yourdomain.com"   "${ENV_FILE}"
     _set_env_if_missing "TOKEN_CACHE_PATH" "${TOKEN_CACHE}"           "${ENV_FILE}"
 fi
+chmod 600 "${ENV_FILE}"
 
 # Register the skill in ~/.openclaw/openclaw.json
 # Preserves all existing config; only adds/enables the m365-graph entry.
@@ -116,13 +136,15 @@ echo "2. Grant the Mail.Send application permission and admin-consent it"
 echo "   in Entra ID → App registrations → API permissions."
 echo "3. Fill ${INSTALL_DIR}/.env with:"
 echo "     TENANT_ID, CLIENT_ID, CLIENT_SECRET, MAIL_SENDER_UPN"
-echo "4. Run the first-time login (device-code flow):"
+echo "4. Run setup-exchange-policy.ps1 (Exchange RBAC for Applications) before"
+echo "   using mail-send. See Microsoft-Exchange-Policy-installation.md."
+echo "5. Run the first-time login (device-code flow):"
 echo "      m365 auth-login"
 echo "   Open https://microsoft.com/devicelogin on any device and enter"
 echo "   the code shown in the terminal."
-echo "5. After login, the skill runs fully headless using cached refresh tokens."
+echo "6. After login, the skill runs fully headless using cached refresh tokens."
 echo "   Mail sending uses the application (client-credentials) flow automatically."
-echo "6. Test: m365 calendar-list"
+echo "7. Test: m365 calendar-list"
 echo ""
 echo "Multi-agent note:"
 echo "  The skill is shared and visible to all OpenClaw agents on this machine."

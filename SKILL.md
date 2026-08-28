@@ -28,7 +28,8 @@ Two authentication flows are used:
 - **Application (client-credentials)** – used exclusively for `mail-send`. Exchange
   Online requires `POST /users/{UPN}/sendMail` with an application token to reliably
   send mail from unattended service applications. This flow requires `CLIENT_SECRET`
-  and `MAIL_SENDER_UPN` in `.env`.
+  and `MAIL_SENDER_UPN` in `.env`, the `Mail.Send` application permission, and
+  Exchange RBAC for Applications via `setup-exchange-policy.ps1` before first use.
 
 ## Configuration
 Credentials stored in: ~/.openclaw/skills/m365-graph/.env
@@ -41,6 +42,9 @@ Required environment variables (all features):
 Additional variables required for `mail-send` only:
 - CLIENT_SECRET   – app client secret (application/client-credentials flow)
 - MAIL_SENDER_UPN – UPN or e-mail of the mailbox to send from (e.g. sender@example.com)
+
+`mail-send` also requires Exchange Online RBAC for Applications, configured with
+`setup-exchange-policy.ps1` before first use (see Microsoft-Exchange-Policy-installation.md).
 
 ## Required Microsoft Graph Permissions
 
@@ -69,6 +73,13 @@ Add the following as an **application** permission in Entra ID and grant admin c
 > HTTP 400 when it is present.
 
 ## First-Time Setup
+
+1. Fill `~/.openclaw/skills/m365-graph/.env` with `TENANT_ID`, `CLIENT_ID`,
+   `CLIENT_SECRET`, and `MAIL_SENDER_UPN`.
+2. Grant delegated Graph permissions and the **Mail.Send application** permission
+   (admin consent). See Microsoft-ENTRA-ID-installation.md.
+3. Run `setup-exchange-policy.ps1` **before** using `mail-send`.
+4. Sign in once via device-code:
 
 ```bash
 m365 auth-login
@@ -269,8 +280,9 @@ After sign-in the app runs headless; tokens refresh automatically.
 ## Notes
 - Authentication is a hybrid model: delegated (device-code) for most features;
   application (client-credentials) for `mail-send` only
-- `mail-send` requires `CLIENT_SECRET` and `MAIL_SENDER_UPN` in `.env` and the
-  `Mail.Send` application permission granted in Entra ID
+- `mail-send` requires `CLIENT_SECRET` and `MAIL_SENDER_UPN` in `.env`, the
+  `Mail.Send` application permission granted in Entra ID, and Exchange RBAC for
+  Applications configured with `setup-exchange-policy.ps1` before first use
 - Run `m365 auth-login` for initial setup or after token expiry
 - Tokens are cached and auto-refreshed; re-auth needed only after ~90 days of inactivity
 - All read/manage API calls use `/me/…` endpoints;

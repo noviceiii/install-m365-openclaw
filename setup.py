@@ -7,12 +7,11 @@ setup(
     packages=find_packages(where='src'),
     package_dir={'': 'src'},
     install_requires=[
-        'msal',
-        'python-dotenv',
-        'python-docx',
-        'python-pptx',
-        'openpyxl',
-        'requests',
+        'msal>=1.32,<2',
+        'python-dotenv>=1.0.1,<2',
+        'python-docx>=1.1,<2',
+        'python-pptx>=1.0,<2',
+        'requests>=2.32,<3',
     ],
     python_requires='>=3.8',
 )

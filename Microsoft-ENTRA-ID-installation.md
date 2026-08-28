@@ -1,12 +1,20 @@
-## Step-by-Step: Entra ID (Microsoft Entra ID) Setup – Delegated / Device-Code Flow
+## Step-by-Step: Entra ID (Microsoft Entra ID) Setup – Hybrid Auth
 
 This guide explains how to register an application in Microsoft Entra ID (formerly Azure AD)
-so your OpenClaw M365 skill can access Microsoft Graph API services using **delegated permissions
-and device-code flow**.
+so your OpenClaw M365 skill can access Microsoft Graph API services using **hybrid
+authentication**:
+
+- **Delegated permissions + device-code flow** for Calendar, Contacts, OneDrive, Tasks,
+  Teams, Bookings, Sites, and reading/managing mail (`GET /me/…`)
+- **Application permission `Mail.Send` + client secret** for sending mail via
+  `POST /users/{MAIL_SENDER_UPN}/sendMail`
 
 The user signs in **once** interactively on any device via `https://microsoft.com/devicelogin`.
 Afterwards the app stores a **refresh token** and runs fully **headless** (no browser on the
-server required).
+server required). Mail sending uses the confidential-client (client-credentials) flow.
+
+The same app registration is both a **public client** (device-code) and a **confidential
+client** (client secret).
 
 **Minimum requirements**
 - A Microsoft 365 tenant with at least **Microsoft 365 Business Basic** (or higher) license
@@ -63,7 +71,7 @@ server required).
    | `profile` | Read profile claims |
    | `offline_access` | Refresh tokens for headless operation |
    | `Mail.ReadWrite` | Read, write, move, delete mail |
-   | `Mail.Send` | Send e-mail |
+   | `Mail.Send` | Send e-mail (delegated; kept for completeness) |
    | `Calendars.ReadWrite` | Read and write calendar events |
    | `Contacts.ReadWrite` | Read and write contacts |
    | `MailboxFolder.ReadWrite` | Manage mail folders |
@@ -87,20 +95,53 @@ server required).
 
 ---
 
-### 4. Summary – The two values you need
+### 4. Add the Mail.Send application permission (required for mail-send)
+
+Unattended `mail-send` uses a confidential client and
+`POST /users/{MAIL_SENDER_UPN}/sendMail`. Delegated `/me/sendMail` is not used
+for sending.
+
+1. Left menu: **API permissions**
+   → Click **Add a permission** → **Microsoft Graph** → **Application permissions**
+
+2. Add:
+
+   | Permission | Purpose |
+   |------------|---------|
+   | `Mail.Send` | Send mail as the mailbox in `MAIL_SENDER_UPN` |
+
+3. Click **Add permissions**
+
+4. Click **Grant admin consent for [your organization name]** again and confirm.
+
+---
+
+### 5. Create a client secret
+
+1. Left menu: **Certificates & secrets** → **Client secrets** → **New client secret**
+
+2. Add a description and expiry, then click **Add**
+
+3. Copy the **Value** immediately (it is shown only once) → this is your `CLIENT_SECRET`
+
+---
+
+### 6. Summary – The values you need
 
 After completing the steps above, you need:
 
 ```text
-TENANT_ID  = xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-CLIENT_ID  = xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+TENANT_ID       = xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+CLIENT_ID       = xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+CLIENT_SECRET   = your-client-secret
+MAIL_SENDER_UPN = sender@yourdomain.com
 ```
 
-No client secret is required for delegated / device-code flow.
+`MAIL_SENDER_UPN` is the UPN or e-mail of the mailbox the application sends from.
 
 ---
 
-### 5. Configure the skill
+### 7. Configure the skill
 
 Paste the values into the `.env` file created by the installer:
 
@@ -113,12 +154,31 @@ It should look like:
 ```env
 TENANT_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 CLIENT_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+CLIENT_SECRET=your-client-secret
+MAIL_SENDER_UPN=sender@yourdomain.com
 TOKEN_CACHE_PATH=/home/youruser/.openclaw/credentials/m365_token_cache.bin
 ```
 
 ---
 
-### 6. First-time authentication (device-code flow)
+### 8. Exchange Online RBAC (required before mail-send)
+
+Application-permission `Mail.Send` must be scoped to the sender mailbox with
+**RBAC for Applications**. Run this **before** the first `mail-send`:
+
+```powershell
+.\setup-exchange-policy.ps1
+```
+
+See [Microsoft-Exchange-Policy-installation.md](Microsoft-Exchange-Policy-installation.md)
+for the full procedure.
+
+Without this step, Graph may accept the token but Exchange Online will reject
+unattended send (typically HTTP 403).
+
+---
+
+### 9. First-time authentication (device-code flow)
 
 Run the following command on the server:
 
@@ -140,19 +200,24 @@ enter the code, and complete the sign-in with an account that has the required p
 
 After successful sign-in:
 - The access token and refresh token are cached in `TOKEN_CACHE_PATH`
-- The app runs **fully headless** from this point on
+- The app runs **fully headless** from this point on for delegated features
 - MSAL automatically refreshes the access token using the stored refresh token
+- Mail sending uses the client secret (application token) and does not use the
+  delegated refresh token
 - Re-authentication is only needed if the refresh token expires (typically after 90 days of inactivity)
 
 ---
 
-### 7. Test the installation
+### 10. Test the installation
 
 ```bash
 m365 calendar-list
 m365 user-read
 m365 mail-list 5
 ```
+
+`mail-send` additionally requires `CLIENT_SECRET`, `MAIL_SENDER_UPN`, the
+application `Mail.Send` permission, and Exchange RBAC from step 8.
 
 ---
 
@@ -163,10 +228,19 @@ m365 mail-list 5
   and set **Allow public client flows** to **Yes**.
 
 - **"AADSTS65001: The user or administrator has not consented"**
-  → Admin consent was not granted. Go back to Step 3 and click **Grant admin consent**.
+  → Admin consent was not granted. Go back to Steps 3–4 and click **Grant admin consent**.
 
 - **Token expired – re-authentication needed**
   → Run `m365 auth-login` again to start a new device-code flow.
+
+- **`CLIENT_SECRET is not set` / `MAIL_SENDER_UPN is not set`**
+  → Fill both values in `~/.openclaw/skills/m365-graph/.env`. They are required
+  for `mail-send` (application / client-credentials flow).
+
+- **Mail send fails with HTTP 403**
+  → Confirm the **Mail.Send application** permission is granted and that
+  `setup-exchange-policy.ps1` has been run for `MAIL_SENDER_UPN`. Wait up to
+  30 minutes for Exchange RBAC to propagate.
 
 - **"Insufficient privileges" for Bookings or Teams**
   → Make sure the Bookings / Chat / OnlineMeetings permissions are added and admin consent
@@ -175,13 +249,3 @@ m365 mail-list 5
 - **Sites.ReadWrite.All not working**
   → Make sure the signed-in user has access to at least one SharePoint site.
   This permission requires admin consent in the tenant.
-
----
-
-## Exchange Online (optional – for advanced mail features)
-
-For basic mail access (`Mail.ReadWrite`, `Mail.Send`) with delegated permissions,
-no additional Exchange configuration is required.
-
-If you encounter issues with mail access in more restrictive tenants, consult:
-[Microsoft-Exchange-Policy-installation.md](Microsoft-Exchange-Policy-installation.md)

@@ -161,6 +161,7 @@ class M365Client:
             cache_file.write_text(
                 self._token_cache.serialize(), encoding="utf-8"
             )
+            os.chmod(cache_file, 0o600)
 
     def _ensure_authenticated(self, force_reauth=False):
         """Acquire a token silently if possible; fall back to device-code flow."""

@@ -1,17 +1,25 @@
 # install-m365-openclaw
 
-OpenClaw Skill for Microsoft 365 access via Graph API with delegated permissions (Device-Code Flow).
+OpenClaw Skill for Microsoft 365 access via Graph API with **hybrid authentication**:
+delegated Device-Code for most features, and a confidential client (`CLIENT_SECRET`)
+for application-permission `Mail.Send`.
 
 **It only works with a business m365 licence.**
 
-**Version:** 0.6.1 (Delegated Permissions – Device-Code Flow - reworked and enhanced command structure)  
-**Goal:** Headless M365 access for OpenClaw agents – one-time sign-in via Device-Code, then permanently token-based.
+**Version:** 0.6.1 (Hybrid: Delegated Device-Code + Application Client-Credentials)  
+**Goal:** Headless M365 access for OpenClaw agents – one-time sign-in via Device-Code, then permanently token-based. Mail sending uses application permissions.
+
+This README is the documentation master. Command details live in [SKILL.md](SKILL.md).
 
 ## Quick Start
 
 ```bash
 curl -L https://raw.githubusercontent.com/noviceiii/install-m365-openclaw/main/install-m365-openclaw.sh | bash
 ```
+
+The installer copies `setup.py` and `src/` from the directory next to the script
+when those files are present (local clone). If they are missing (typical `curl | bash`
+invocation), it clones this repository into a well-known temp directory and continues.
 
 ## Features
 
@@ -32,9 +40,16 @@ For a full list of all commands and options, see [SKILL.md](SKILL.md).
 
 ## Prerequisites & Setup
 
-1. Entra ID App Registration (Delegated Permissions) → [Microsoft-ENTRA-ID-installation.md](Microsoft-ENTRA-ID-installation.md)
-2. Enter credentials in `~/.openclaw/skills/m365-graph/.env` (TENANT_ID, CLIENT_ID)
-3. Set the Exchange Policies  → [setup-exchange-policy.ps1](setup-exchange-policy.ps1)
+1. Entra ID App Registration (hybrid: delegated + application) → [Microsoft-ENTRA-ID-installation.md](Microsoft-ENTRA-ID-installation.md)
+   - Enable **Public client / device-code** flow
+   - Grant delegated Graph permissions (admin consent)
+   - Grant the **Mail.Send application** permission (admin consent)
+   - Create a **client secret**
+2. Enter credentials in `~/.openclaw/skills/m365-graph/.env`:
+   `TENANT_ID`, `CLIENT_ID`, `CLIENT_SECRET`, `MAIL_SENDER_UPN`
+3. Configure Exchange Online RBAC for Applications **before using `mail-send`**:
+   run [setup-exchange-policy.ps1](setup-exchange-policy.ps1)
+   (see [Microsoft-Exchange-Policy-installation.md](Microsoft-Exchange-Policy-installation.md))
 4. First sign-in via Device-Code: `m365 auth-login`
 5. After that, run headlessly: `m365 calendar-list`
 
@@ -42,13 +57,20 @@ See [SKILL.md](SKILL.md) for all available commands.
 
 ## Authentication
 
-The skill uses **delegated permissions** with **Device-Code Flow**:
+The skill uses a **hybrid** model:
 
-- The user signs in **once** interactively at **https://microsoft.com/devicelogin**
-- The code is displayed in the terminal
-- After sign-in the app stores Refresh Tokens and works **permanently headless**
-- No browser required on the server
-- No client secret required
+- **Delegated (device-code)** – for all features except mail sending (`GET /me/…`).
+  The user signs in **once** interactively at **https://microsoft.com/devicelogin**.
+  The code is displayed in the terminal. After sign-in the app stores refresh tokens
+  and works **permanently headless**. No browser is required on the server.
+- **Application (client-credentials)** – used exclusively for `mail-send`
+  (`POST /users/{MAIL_SENDER_UPN}/sendMail`). This requires:
+  - `CLIENT_SECRET` and `MAIL_SENDER_UPN` in `.env`
+  - the **Mail.Send** *application* permission, admin-consented in Entra ID
+  - Exchange RBAC for Applications via `setup-exchange-policy.ps1` **before** first `mail-send`
+
+The same Entra ID app registration is both a public client (device-code) and a
+confidential client (client secret).
 
 ## OpenClaw Integration
 

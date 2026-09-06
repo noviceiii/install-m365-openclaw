@@ -1,5 +1,5 @@
 """
-__main__.py – CLI entry point for the OpenClaw M365 skill (v0.6.1).
+__main__.py – CLI entry point for the OpenClaw M365 skill (v0.6.2).
 
 Invoked as:  python -m m365_openclaw <command> [arguments...]
 Or via the  m365  wrapper script placed in ~/.local/bin.
@@ -10,7 +10,7 @@ import json
 import sys
 
 USAGE = """\
-OpenClaw M365 CLI v0.6.1 – Microsoft 365 for agents (delegated / device-code auth)
+OpenClaw M365 CLI v0.6.2 – Microsoft 365 for agents (MSAL hybrid: device-code + application Mail.Send)
 
 ━━━ AUTH ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   auth-login
@@ -191,6 +191,11 @@ OpenClaw M365 CLI v0.6.1 – Microsoft 365 for agents (delegated / device-code a
 
   tasklist-create <name>
       Create a new task list.
+
+  task-handle <task_id> --to TO_LIST_ID
+      Move a task to another task list (copy + delete).
+      --list-id ID   Source task list ID (defaults to the default list)
+      --to ID        Destination task list ID (required)
 
 ━━━ USER ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   user-read

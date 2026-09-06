@@ -10,7 +10,7 @@ metadata: '{"openclaw":{"emoji":"📧","requires":{"bins":["m365"],"env":["TENAN
 
 OpenClaw skill for unattended Microsoft 365 access via Graph API.
 
-**Version:** 0.6.1 (Hybrid: Delegated Device-Code + Application Client-Credentials)
+**Version:** 0.6.2 (Hybrid: Delegated Device-Code + Application Client-Credentials)
 
 ## Executable
 m365
@@ -196,6 +196,8 @@ After sign-in the app runs headless; tokens refresh automatically.
 | `task-edit \<id\> --checklist-complete ITEM_ID` | Mark a checklist item as completed | `m365 task-edit ABC123 --checklist-complete ITEM_ID` |
 | `task-edit \<id\> --checklist-delete ITEM_ID` | Delete a checklist item | `m365 task-edit ABC123 --checklist-delete ITEM_ID` |
 | `task-delete \<id\>` | Delete a task | `m365 task-delete ABC123` |
+| `task-handle \<id\> --to TO_LIST_ID` | Move a task to another list | `m365 task-handle ABC123 --to LIST_ID` |
+| `task-handle \<id\> --list-id FROM --to TO` | Move from a specific source list | `m365 task-handle ABC123 --list-id FROM --to TO` |
 | `tasklist-list` | List all task lists | `m365 tasklist-list` |
 | `tasklist-create \<name\>` | Create a task list | `m365 tasklist-create Privat` |
 | `todo-rename-list \<list_id\> \<new_name\>` | Rename a task list | `m365 todo-rename-list AAMk... NewName` |
@@ -278,6 +280,8 @@ After sign-in the app runs headless; tokens refresh automatically.
 | `sites-search \<query\>` | Search sites by keyword | `m365 sites-search "Intranet"` |
 
 ## Notes
+- Requires **Python 3.10+**
+- Credential hygiene: token cache and `.env` are mode **0600**; credentials directory is **0700**. `.env` loads from the skill install directory (not cwd).
 - Authentication is a hybrid model: delegated (device-code) for most features;
   application (client-credentials) for `mail-send` only
 - `mail-send` requires `CLIENT_SECRET` and `MAIL_SENDER_UPN` in `.env`, the

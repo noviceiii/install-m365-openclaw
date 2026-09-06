@@ -1,5 +1,5 @@
 """
-core.py – Microsoft 365 client for OpenClaw agents (v0.6.1).
+core.py – Microsoft 365 client for OpenClaw agents (v0.6.2).
 
 Supports: Mail, Calendar, Contacts, OneDrive, OneNote, Excel, Word, PowerPoint,
           Microsoft ToDo tasks, Teams Chats, Online Meetings, Bookings, Sites.
@@ -37,7 +37,10 @@ import msal
 import requests
 from dotenv import load_dotenv
 
-load_dotenv()
+# Load .env from the skill install directory (…/m365-graph/.env), not cwd.
+# Layout: <skill_dir>/src/m365_openclaw/core.py  →  parents[2] == <skill_dir>
+_SKILL_DIR = Path(__file__).resolve().parents[2]
+load_dotenv(_SKILL_DIR / ".env")
 
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 GRAPH_ME = f"{GRAPH_BASE}/me"
@@ -157,11 +160,35 @@ class M365Client:
     def _save_cache(self):
         if self.token_cache_path and self._token_cache.has_state_changed:
             cache_file = Path(self.token_cache_path)
-            cache_file.parent.mkdir(parents=True, exist_ok=True)
-            cache_file.write_text(
-                self._token_cache.serialize(), encoding="utf-8"
+            parent = cache_file.parent
+            parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            try:
+                os.chmod(parent, 0o700)
+            except OSError:
+                pass
+            data = self._token_cache.serialize().encode("utf-8")
+            # Atomic write with mode 0o600 (temp file + replace).
+            fd, tmp_path = tempfile.mkstemp(
+                dir=str(parent), prefix=".m365_token_cache_", suffix=".tmp"
             )
-            os.chmod(cache_file, 0o600)
+            try:
+                os.write(fd, data)
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+            try:
+                os.chmod(tmp_path, 0o600)
+                os.replace(tmp_path, cache_file)
+            except Exception:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
+            try:
+                os.chmod(cache_file, 0o600)
+            except OSError:
+                pass
 
     def _ensure_authenticated(self, force_reauth=False):
         """Acquire a token silently if possible; fall back to device-code flow."""

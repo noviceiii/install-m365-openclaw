@@ -6,8 +6,9 @@ for application-permission `Mail.Send`.
 
 **It only works with a business m365 licence.**
 
-**Version:** 0.6.1 (Hybrid: Delegated Device-Code + Application Client-Credentials)  
-**Goal:** Headless M365 access for OpenClaw agents – one-time sign-in via Device-Code, then permanently token-based. Mail sending uses application permissions.
+**Version:** 0.6.2 (Hybrid: Delegated Device-Code + Application Client-Credentials)  
+**Goal:** Headless M365 access for OpenClaw agents – one-time sign-in via Device-Code, then permanently token-based. Mail sending uses application permissions.  
+**Requires:** Python 3.10+
 
 This README is the documentation master. Command details live in [SKILL.md](SKILL.md).
 
@@ -27,7 +28,7 @@ This skill gives OpenClaw agents full access to your Microsoft 365 account. Key 
 
 - **Mail** – Send and read e-mails, reply, forward, manage folders
 - **Contacts** – Create, edit, and delete contacts and contact folders
-- **Tasks** – Manage Microsoft To Do tasks and task lists
+- **Tasks** – Manage Microsoft To Do tasks and task lists (including `task-handle` to move a task between lists)
 - **Calendar** – Create, read, and manage calendar events; handle invitations (accept, tentative, decline)
 - **OneDrive** – Upload, download, move, and share files
 - **Teams Chat & Online Meetings** – Create chats, send messages, schedule online meetings
@@ -71,6 +72,16 @@ The skill uses a **hybrid** model:
 
 The same Entra ID app registration is both a public client (device-code) and a
 confidential client (client secret).
+
+## Credential file modes
+
+After install / login the skill uses restrictive filesystem modes:
+
+- `~/.openclaw/credentials` directory: mode **0700**
+- MSAL token cache (`TOKEN_CACHE_PATH`, default `~/.openclaw/credentials/m365_token_cache.bin`): mode **0600** (written atomically)
+- Skill `.env` (`~/.openclaw/skills/m365-graph/.env`): mode **0600**
+
+`.env` is loaded from the skill install directory (not from the process cwd).
 
 ## OpenClaw Integration
 

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # =============================================================================
-# OpenClaw M365 Graph Skill Installer v0.6.1
+# OpenClaw M365 Graph Skill Installer v0.6.2
 # =============================================================================
 set -euo pipefail
 
 DEFAULT_OPENCLAW_DIR="${HOME}/.openclaw"
 
-echo "=== OpenClaw M365 Graph Skill Installer v0.6.1 ==="
+echo "=== OpenClaw M365 Graph Skill Installer v0.6.2 ==="
 
 read -p "OpenClaw base directory [${DEFAULT_OPENCLAW_DIR}]: " OPENCLAW_DIR
 OPENCLAW_DIR="${OPENCLAW_DIR:-${DEFAULT_OPENCLAW_DIR}}"
@@ -19,6 +19,12 @@ CLI_NAME="m365"
 
 sudo apt update -qq && sudo apt install -y python3 python3-venv python3-pip git
 
+# Require Python 3.10+ (matches setup.py python_requires)
+if ! python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)'; then
+    echo "ERROR: Python 3.10 or newer is required (found: $(python3 --version 2>&1))." >&2
+    exit 1
+fi
+
 mkdir -p "${INSTALL_DIR}"/{src/m365_openclaw,bin} "${OPENCLAW_DIR}/credentials" "${HOME}/.local/bin"
 chmod 700 "${OPENCLAW_DIR}/credentials"
 
@@ -27,10 +33,10 @@ python3 -m venv "${VENV_DIR}"
 "${VENV_DIR}/bin/pip" install --upgrade pip
 "${VENV_DIR}/bin/pip" install \
     'msal>=1.32,<2' \
-    'python-dotenv>=1.0.1,<2' \
+    'python-dotenv>=1.2.2,<2' \
     'python-docx>=1.1,<2' \
     'python-pptx>=1.0,<2' \
-    'requests>=2.32,<3'
+    'requests>=2.34,<3'
 
 # Copy package files from repository structure.
 # curl|bash leaves this script without sibling setup.py/src; clone the repo
@@ -52,6 +58,19 @@ cp -r "${SCRIPT_DIR}/src/m365_openclaw/." "${INSTALL_DIR}/src/m365_openclaw/"
 
 # Copy SKILL.md so OpenClaw's skill manager can read it from the install dir
 cp "${SCRIPT_DIR}/SKILL.md" "${INSTALL_DIR}/SKILL.md"
+
+# Copy Entra ID / Exchange setup docs and the Exchange RBAC script into the skill dir
+for _doc in \
+    Microsoft-ENTRA-ID-installation.md \
+    Microsoft-Exchange-Policy-installation.md \
+    setup-exchange-policy.ps1
+do
+    if [ -f "${SCRIPT_DIR}/${_doc}" ]; then
+        cp "${SCRIPT_DIR}/${_doc}" "${INSTALL_DIR}/${_doc}"
+    else
+        echo "WARN: ${_doc} not found next to package files; skip copy." >&2
+    fi
+done
 
 cd "${INSTALL_DIR}"
 "${VENV_DIR}/bin/pip" install -e .
